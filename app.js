@@ -1,3 +1,20 @@
+/**
+ * app.js — VERSION COMPLETE (copier/coller)
+ * ✅ Mélodie (guide) BEAUCOUP plus forte :
+ *   - volumes.melody par défaut = 1.00
+ *   - applyVolumes : melodyBusGain plus élevé (jusqu’à ~1.15)
+ *   - envelope masterGain plus élevé (0.22 au lieu de 0.12)
+ *   - compresseur sur la sortie mélodie pour éviter la saturation
+ *
+ * Le reste :
+ * - Ballon rond pixel-art + ceinture
+ * - Volumes réglables (mélodie / foule / metronome / batterie)
+ * - Terrain de foot qui défile, médailles animées, coupes + étincelles, anneaux
+ * - Bonus +50/+100 aléatoires avec feu d’artifice + texte flottant
+ * - Lyrics depuis lyrics.txt : précédente (gris), actuelle (blanc), suivante (gris qui monte en intensité)
+ * - Countdown + jingle départ, jingle note juste
+ */
+
 document.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
@@ -15,23 +32,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const loadingStatus = document.getElementById('loading-status');
   const btnMetro = document.getElementById('btnMetro');
   const btnDrum = document.getElementById('btnDrum');
+  const controlsRoot = document.querySelector('.controls');
 
   // ---------------- CONFIG ----------------
   const MIDI_FILE_PATH = 'musique.mid';
   const STADIUM_FILE_PATH = 'stadium.mp3';
 
-  // ✅ Lyrics TXT
   const LYRICS_FILE_PATH = 'lyrics.txt';
   const BEATS_PER_LYRIC_LINE = 8;
 
-  // ✅ responsive base design size (do not change drawings coords)
   const BASE_W = 950;
   const BASE_H = 460;
 
-  // 🔉 foule (baisse un peu)
-  const STADIUM_VOL = 0.045;
-
-  // gameplay (in BASE units)
   const PIXELS_PER_BEAT = 220;
   const NOTE_HEIGHT_UNIT = 15;
   const CENTER_NOTE = 60;
@@ -40,29 +52,40 @@ document.addEventListener('DOMContentLoaded', () => {
   const BPM = 120;
   const BEAT_DURATION = 60 / BPM;
 
-  // pitch
   const MIN_FREQ = 70;
   const MAX_FREQ = 900;
 
-  // validation octave
   const HIT_TOL = 1.5;
   const OCTAVE_SEMI = 12;
   const OCTAVE_TOL = 1.8;
 
-  // end
   const END_PADDING_BEATS = 2.0;
 
-  // countdown
   const COUNTDOWN_SEC = 3.2;
   const COUNTDOWN_BEAT_BEEP = 0.42;
 
-  // jingles
   const HIT_JINGLE_VOL = 0.06;
   const START_JINGLE_VOL = 0.10;
 
-  // bonus
-  const BONUS_50_CHANCE = 0.14;
-  const BONUS_100_CHANCE = 0.06;
+  const BONUS_50_CHANCE = 0.18;
+  const BONUS_100_CHANCE = 0.08;
+
+  // ✅ Mélodie plus forte (envelope)
+  const MELODY_ENVELOPE_GAIN = 0.22; // was 0.12
+
+  // Ballon rond
+  const BALL_DIAM = 28;
+  const BALL_BELT = 2;
+  const BALL_PATCH_SCALE = 0.32;
+
+  // ---------------- VOLUMES ----------------
+  // ✅ Mélodie à fond par défaut
+  const volumes = {
+    melody: 1.00,     // was 0.95
+    stadium: 0.16,    // un peu bas pour laisser la place à la mélodie
+    metronome: 0.55,
+    drums: 0.50
+  };
 
   // ---------------- HELPERS ----------------
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
@@ -81,7 +104,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return false;
   }
 
-  // Ballon sur la ligne même si chanté à l'octave (repli pitch-class)
   function foldToNearestSamePitchClass(vocalNote, targetNote) {
     if (!vocalNote) return null;
     const targetPc = mod12(Math.round(targetNote));
@@ -109,31 +131,24 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ---------------- RESPONSIVE LAYOUT ----------------
-  // Make #game-container and lyric box fit phone portrait; keep drawings in BASE coords with scale.
   function applyResponsiveLayout() {
-    // container width = viewport width minus a bit
     const vw = Math.max(320, window.innerWidth);
     const margin = 16;
     const targetW = Math.min(BASE_W, vw - margin);
     const targetH = Math.round(targetW * (BASE_H / BASE_W));
 
-    // override fixed CSS sizes (mobile-friendly)
     container.style.width = `${targetW}px`;
     container.style.height = `${targetH}px`;
 
-    // canvas CSS size
     canvas.style.width = `${targetW}px`;
     canvas.style.height = `${targetH}px`;
 
-    // set real pixel buffer with DPR
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     canvas.width = Math.round(targetW * dpr);
     canvas.height = Math.round(targetH * dpr);
 
-    // keep lyrics aligned to game width
     lyricDiv.style.width = `${targetW}px`;
 
-    // scale drawings from BASE units to current display
     const unitScale = targetW / BASE_W;
     ctx.setTransform(dpr * unitScale, 0, 0, dpr * unitScale, 0, 0);
     ctx.imageSmoothingEnabled = false;
@@ -155,34 +170,36 @@ document.addEventListener('DOMContentLoaded', () => {
   let audioCtx, analyser, dataArray;
   let masterOsc, subOsc, masterGain;
 
-  // ✅ Stadium MP3
+  // buses
+  let melodyBusGain = null; // volume global mélodie
+  let melodyCompressor = null; // ✅ compresseur pour pousser le volume sans saturer
+  let sfxMetroGain = null;
+  let sfxDrumGain = null;
+  let stadiumGain = null;
+
   const stadium = {
     buffer: null,
     source: null,
-    gain: null,
     isLoaded: false,
     isPlaying: false,
     loadingPromise: null
   };
 
-  // session
   let state = 'idle'; // 'idle'|'countdown'|'playing'|'finished'
   let startTime = 0;
   let countdownStart = 0;
   let finishStats = null;
 
-  // voice
   let currentVocalNote = 60;
   let displayBallY = noteToY(60);
   let ballRotation = 0;
   const medianBuffer = [];
 
-  // fx
   let trophies = [];
   let sparks = [];
   let rings = [];
   let floatTexts = [];
-  let fireworks = []; // ✅ dedicated fireworks particles for bonus
+  let fireworks = [];
 
   // 🏅 medals
   const medals = [];
@@ -201,9 +218,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   initMedals();
 
-  // ✅ Lyrics
+  // Lyrics
   let lyricsRawLines = null;
-  let lyricsItems = [];  // [{beat, text}]
+  let lyricsItems = [];
   let lyricsLoaded = false;
 
   // ---------------- UI TOGGLES ----------------
@@ -213,7 +230,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.textContent = `${label}: ${on ? 'ON' : 'OFF'}`;
   }
   updateToggle(btnMetro, 'METRONOME', false);
-  updateToggle(btnDrum, 'BATTERIE ROCK', false);
+  updateToggle(btnDrum, 'BATTERIE', false);
 
   btnMetro.addEventListener('click', () => {
     isMetroEnabled = !isMetroEnabled;
@@ -221,8 +238,90 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   btnDrum.addEventListener('click', () => {
     isDrumEnabled = !isDrumEnabled;
-    updateToggle(btnDrum, 'BATTERIE ROCK', isDrumEnabled);
+    updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
   });
+
+  // ---------------- VOLUME UI ----------------
+  function makeSliderRow(label, key) {
+    const wrap = document.createElement('div');
+    wrap.style.display = 'flex';
+    wrap.style.alignItems = 'center';
+    wrap.style.gap = '10px';
+    wrap.style.marginTop = '8px';
+    wrap.style.justifyContent = 'center';
+
+    const lab = document.createElement('div');
+    lab.textContent = label;
+    lab.style.fontSize = '8px';
+    lab.style.minWidth = '140px';
+    lab.style.textAlign = 'right';
+    lab.style.color = '#111';
+    lab.style.textShadow = '1px 1px rgba(255,255,255,0.3)';
+
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = '0';
+    input.max = '100';
+    input.value = String(Math.round(volumes[key] * 100));
+    input.style.width = '180px';
+
+    const val = document.createElement('div');
+    val.style.fontSize = '8px';
+    val.style.minWidth = '40px';
+    val.style.textAlign = 'left';
+    val.style.color = '#111';
+    val.textContent = `${input.value}%`;
+
+    input.addEventListener('input', () => {
+      val.textContent = `${input.value}%`;
+      volumes[key] = clamp(parseInt(input.value, 10) / 100, 0, 1);
+      applyVolumes();
+    });
+
+    wrap.appendChild(lab);
+    wrap.appendChild(input);
+    wrap.appendChild(val);
+    return wrap;
+  }
+
+  function injectVolumeUI() {
+    const existing = document.getElementById('volume-panel');
+    if (existing) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'volume-panel';
+    panel.style.marginTop = '10px';
+    panel.style.paddingTop = '10px';
+    panel.style.borderTop = '2px solid rgba(0,0,0,0.2)';
+
+    const title = document.createElement('div');
+    title.textContent = "VOLUMES";
+    title.style.fontSize = '9px';
+    title.style.marginBottom = '6px';
+
+    panel.appendChild(title);
+    panel.appendChild(makeSliderRow("MELODIE (guide)", "melody"));
+    panel.appendChild(makeSliderRow("FOULE (stade)", "stadium"));
+    panel.appendChild(makeSliderRow("METRONOME", "metronome"));
+    panel.appendChild(makeSliderRow("BATTERIE", "drums"));
+
+    controlsRoot.appendChild(panel);
+  }
+  injectVolumeUI();
+
+  function applyVolumes() {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+
+    // ✅ VOLUME MELODIE (global) — plus haut
+    // Ici on peut monter au-dessus de 1.0 (gain node accepte)
+    // Le compresseur derrière empêche le clipping.
+    if (melodyBusGain) melodyBusGain.gain.setTargetAtTime(1.15 * volumes.melody, t, 0.02);
+
+    if (stadiumGain) stadiumGain.gain.setTargetAtTime(0.10 * volumes.stadium, t, 0.05);
+    if (sfxMetroGain) sfxMetroGain.gain.setTargetAtTime(0.25 * volumes.metronome, t, 0.02);
+    if (sfxDrumGain) sfxDrumGain.gain.setTargetAtTime(0.35 * volumes.drums, t, 0.02);
+  }
 
   // ---------------- MIDI ----------------
   async function loadMidi() {
@@ -273,10 +372,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // - ligne vide => +8 beats
-  // - "# ..." => ignore
-  // - "~N" / "pause N" => pause N blocs
-  // - "@BEATS texte" => placement absolu (beat = firstNoteT + BEATS)
   function buildLyricsSchedule() {
     lyricsItems = [];
     if (!lyricsRawLines || !Array.isArray(lyricsRawLines)) return;
@@ -286,36 +381,21 @@ document.addEventListener('DOMContentLoaded', () => {
     for (const raw of lyricsRawLines) {
       const line = (raw ?? '').trimEnd();
       const trimmed = line.trim();
-
       if (trimmed.startsWith('#')) continue;
 
-      if (trimmed.length === 0) {
-        beatCursor += BEATS_PER_LYRIC_LINE;
-        continue;
-      }
+      if (trimmed.length === 0) { beatCursor += BEATS_PER_LYRIC_LINE; continue; }
 
       const mPause1 = trimmed.match(/^~\s*(\d+)\s*$/);
-      if (mPause1) {
-        const n = parseInt(mPause1[1], 10) || 1;
-        beatCursor += n * BEATS_PER_LYRIC_LINE;
-        continue;
-      }
+      if (mPause1) { beatCursor += (parseInt(mPause1[1], 10) || 1) * BEATS_PER_LYRIC_LINE; continue; }
 
       const mPause2 = trimmed.match(/^pause\s*(\d+)?\s*$/i);
-      if (mPause2) {
-        const n = mPause2[1] ? (parseInt(mPause2[1], 10) || 1) : 1;
-        beatCursor += n * BEATS_PER_LYRIC_LINE;
-        continue;
-      }
+      if (mPause2) { beatCursor += (mPause2[1] ? (parseInt(mPause2[1], 10) || 1) : 1) * BEATS_PER_LYRIC_LINE; continue; }
 
       const mAbs = trimmed.match(/^@(\d+)\s+(.*)$/);
       if (mAbs) {
         const abs = parseInt(mAbs[1], 10) || 0;
         const txt = (mAbs[2] || '').trim();
-        if (txt.length > 0) {
-          const beat = firstNoteT + abs;
-          lyricsItems.push({ beat, text: txt });
-        }
+        if (txt.length > 0) lyricsItems.push({ beat: firstNoteT + abs, text: txt });
         beatCursor = (firstNoteT + abs) + BEATS_PER_LYRIC_LINE;
         continue;
       }
@@ -340,59 +420,67 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function findCurrentLyricIndex(currentBeat) {
     if (!lyricsItems || lyricsItems.length === 0) return -1;
-    let lo = 0, hi = lyricsItems.length - 1;
-    let ans = -1;
+    let lo = 0, hi = lyricsItems.length - 1, ans = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (lyricsItems[mid].beat <= currentBeat) {
-        ans = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
+      if (lyricsItems[mid].beat <= currentBeat) { ans = mid; lo = mid + 1; }
+      else hi = mid - 1;
     }
     return ans;
   }
 
-  // 3 lignes : précédente (gris) / actuelle (blanc) / suivante (gris->blanc transition)
   function renderLyrics3Lines(currentBeat) {
     if (!lyricsLoaded || !lyricsItems || lyricsItems.length === 0) return;
 
     const idx = findCurrentLyricIndex(currentBeat);
-
     const prevText = (idx > 0) ? (lyricsItems[idx - 1]?.text || "") : "";
     const curText  = (idx >= 0) ? (lyricsItems[idx]?.text || "") : "";
     const nextText = (idx >= 0) ? (lyricsItems[idx + 1]?.text || "") : (lyricsItems[0]?.text || "");
 
     let prog = 0;
-    if (idx >= 0) {
-      const curBeat0 = lyricsItems[idx].beat;
-      prog = clamp((currentBeat - curBeat0) / BEATS_PER_LYRIC_LINE, 0, 1);
-    }
+    if (idx >= 0) prog = clamp((currentBeat - lyricsItems[idx].beat) / BEATS_PER_LYRIC_LINE, 0, 1);
 
-    const nextAlpha = 0.35 + 0.65 * prog;  // 0.35 -> 1.0
+    const nextAlpha = 0.35 + 0.65 * prog;
     const nextGlow  = 0.12 + 0.45 * prog;
 
-    const prevHtml = prevText
-      ? `<div style="color:rgba(255,255,255,0.42); text-shadow:2px 2px #000;">${escapeHtml(prevText)}</div>`
-      : `<div style="color:rgba(255,255,255,0.14); text-shadow:2px 2px #000;"> </div>`;
-
-    const curHtml = curText
-      ? `<div style="color:#ffffff; text-shadow:2px 2px #000; font-weight:700;">${escapeHtml(curText)}</div>`
-      : `<div style="color:rgba(255,255,255,0.65); text-shadow:2px 2px #000;">...</div>`;
-
-    const nextHtml = nextText
-      ? `<div style="
-            color:rgba(255,255,255,${nextAlpha.toFixed(3)});
-            text-shadow:2px 2px #000, 0 0 10px rgba(255,255,255,${nextGlow.toFixed(3)});
-          ">${escapeHtml(nextText)}</div>`
-      : `<div style="color:rgba(255,255,255,0.14); text-shadow:2px 2px #000;"> </div>`;
-
-    lyricDiv.innerHTML = prevHtml + curHtml + nextHtml;
+    lyricDiv.innerHTML =
+      `${prevText ? `<div style="color:rgba(255,255,255,0.42); text-shadow:2px 2px #000;">${escapeHtml(prevText)}</div>`
+                  : `<div style="color:rgba(255,255,255,0.14); text-shadow:2px 2px #000;"> </div>`}
+       ${curText ? `<div style="color:#ffffff; text-shadow:2px 2px #000; font-weight:700;">${escapeHtml(curText)}</div>`
+                 : `<div style="color:rgba(255,255,255,0.65); text-shadow:2px 2px #000;">...</div>`}
+       ${nextText ? `<div style="color:rgba(255,255,255,${nextAlpha.toFixed(3)}); text-shadow:2px 2px #000, 0 0 10px rgba(255,255,255,${nextGlow.toFixed(3)});">${escapeHtml(nextText)}</div>`
+                  : `<div style="color:rgba(255,255,255,0.14); text-shadow:2px 2px #000;"> </div>`}`;
   }
 
   // ---------------- AUDIO INIT ----------------
   async function initAudio() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // buses
+      melodyBusGain = audioCtx.createGain();
+      melodyCompressor = audioCtx.createDynamicsCompressor();
+
+      // ✅ réglage compresseur (safe + pousse la mélodie)
+      melodyCompressor.threshold.setValueAtTime(-18, audioCtx.currentTime);
+      melodyCompressor.knee.setValueAtTime(20, audioCtx.currentTime);
+      melodyCompressor.ratio.setValueAtTime(6, audioCtx.currentTime);
+      melodyCompressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+      melodyCompressor.release.setValueAtTime(0.10, audioCtx.currentTime);
+
+      sfxMetroGain = audioCtx.createGain();
+      sfxDrumGain = audioCtx.createGain();
+      stadiumGain = audioCtx.createGain();
+
+      // Routing
+      melodyBusGain.connect(melodyCompressor);
+      melodyCompressor.connect(audioCtx.destination);
+
+      sfxMetroGain.connect(audioCtx.destination);
+      sfxDrumGain.connect(audioCtx.destination);
+      stadiumGain.connect(audioCtx.destination);
+
+      // mic
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
       });
@@ -403,6 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
       source.connect(analyser);
       dataArray = new Float32Array(analyser.fftSize);
 
+      // melody oscillators -> masterGain envelope -> melodyBusGain
       masterOsc = audioCtx.createOscillator();
       subOsc = audioCtx.createOscillator();
       masterGain = audioCtx.createGain();
@@ -411,12 +500,15 @@ document.addEventListener('DOMContentLoaded', () => {
       subOsc.type = 'triangle';
       masterOsc.connect(masterGain);
       subOsc.connect(masterGain);
-      masterGain.connect(audioCtx.destination);
-      masterGain.gain.value = 0;
+      masterGain.connect(melodyBusGain);
 
+      masterGain.gain.value = 0;
       masterOsc.start();
       subOsc.start();
+
+      applyVolumes();
     }
+
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     await ensureStadiumLoaded();
   }
@@ -428,11 +520,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     stadium.loadingPromise = (async () => {
       try {
-        if (!stadium.gain) {
-          stadium.gain = audioCtx.createGain();
-          stadium.gain.gain.value = STADIUM_VOL;
-          stadium.gain.connect(audioCtx.destination);
-        }
         const res = await fetch(STADIUM_FILE_PATH);
         if (!res.ok) throw new Error(`fetch stadium.mp3 failed: ${res.status}`);
         const arr = await res.arrayBuffer();
@@ -448,9 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function startStadiumLoop() {
-    if (!audioCtx || !stadium.isLoaded) return;
-    if (stadium.isPlaying) return;
-
+    if (!audioCtx || !stadium.isLoaded || stadium.isPlaying) return;
     stopStadiumLoop();
 
     const src = audioCtx.createBufferSource();
@@ -458,12 +543,12 @@ document.addEventListener('DOMContentLoaded', () => {
     src.loop = true;
     src.loopStart = 0;
     src.loopEnd = stadium.buffer.duration;
-    src.connect(stadium.gain);
+    src.connect(stadiumGain);
 
     const t = audioCtx.currentTime;
-    stadium.gain.gain.cancelScheduledValues(t);
-    stadium.gain.gain.setValueAtTime(0.0001, t);
-    stadium.gain.gain.exponentialRampToValueAtTime(STADIUM_VOL, t + 0.45);
+    stadiumGain.gain.cancelScheduledValues(t);
+    stadiumGain.gain.setValueAtTime(0.0001, t);
+    stadiumGain.gain.exponentialRampToValueAtTime(0.10 * volumes.stadium, t + 0.45);
 
     src.start(t);
     stadium.source = src;
@@ -476,13 +561,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function stopStadiumLoop() {
     if (!audioCtx) return;
-
     const t = audioCtx.currentTime;
-    if (stadium.gain) {
-      stadium.gain.gain.cancelScheduledValues(t);
-      stadium.gain.gain.setValueAtTime(stadium.gain.gain.value || STADIUM_VOL, t);
-      stadium.gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
-    }
+
+    stadiumGain.gain.cancelScheduledValues(t);
+    stadiumGain.gain.setValueAtTime(stadiumGain.gain.value || (0.10 * volumes.stadium), t);
+    stadiumGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
 
     if (stadium.source) {
       try { stadium.source.stop(t + 0.20); } catch {}
@@ -531,7 +614,7 @@ document.addEventListener('DOMContentLoaded', () => {
     playTone(f * 2.5, now + 0.03, 0.10, 'triangle', HIT_JINGLE_VOL * 0.8);
   }
 
-  // ---------------- DRUMS ----------------
+  // ---------------- DRUMS / METRO ----------------
   function playKick(t) {
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
@@ -539,7 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
     o.frequency.exponentialRampToValueAtTime(0.01, t + 0.5);
     g.gain.setValueAtTime(0.8, t);
     g.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
-    o.connect(g); g.connect(audioCtx.destination);
+    o.connect(g); g.connect(sfxDrumGain);
     o.start(t); o.stop(t + 0.5);
   }
 
@@ -547,12 +630,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.1, audioCtx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
     const src = audioCtx.createBufferSource();
     src.buffer = buffer;
+
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0.3, t);
     g.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
-    src.connect(g); g.connect(audioCtx.destination);
+
+    src.connect(g); g.connect(sfxDrumGain);
     src.start(t);
   }
 
@@ -563,7 +649,7 @@ document.addEventListener('DOMContentLoaded', () => {
     o.frequency.setValueAtTime(10000, t);
     g.gain.setValueAtTime(0.06, t);
     g.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
-    o.connect(g); g.connect(audioCtx.destination);
+    o.connect(g); g.connect(sfxMetroGain);
     o.start(t); o.stop(t + 0.05);
   }
 
@@ -595,15 +681,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (maxT === -1 || nsdf[t] > nsdf[maxT]) maxT = t;
       }
     }
-
     return (maxT === -1) ? null : (sampleRate / maxT);
   }
 
   // ---------------- VISUALS ----------------
   function drawFootballPitch(scrollX, tSec) {
-    const W = BASE_W;
-    const H = BASE_H;
-
+    const W = BASE_W, H = BASE_H;
     const hue = 115 + 12 * Math.sin(tSec * 0.35);
     const stripeW = 120;
 
@@ -631,21 +714,6 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.beginPath();
     ctx.arc(W / 2, H / 2, 4, 0, Math.PI * 2);
     ctx.fill();
-
-    const boxH = 220;
-    const boxW = 140;
-
-    ctx.strokeRect(12, (H - boxH) / 2, boxW, boxH);
-    ctx.strokeRect(12, (H - 120) / 2, 60, 120);
-    ctx.beginPath();
-    ctx.arc(12 + 95, H / 2, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeRect(W - 12 - boxW, (H - boxH) / 2, boxW, boxH);
-    ctx.strokeRect(W - 12 - 60, (H - 120) / 2, 60, 120);
-    ctx.beginPath();
-    ctx.arc(W - 12 - 95, H / 2, 3.5, 0, Math.PI * 2);
-    ctx.fill();
   }
 
   function updateMedals() {
@@ -665,12 +733,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function drawMedal(m, tSec) {
     const bounce = Math.sin(tSec * 2.2 + m.phase) * 3.0;
     const rot = Math.sin(tSec * 1.6 + m.phase) * 0.08;
-    const scale = 1.0 + 0.03 * Math.sin(tSec * 2.8 + m.phase);
 
     ctx.save();
     ctx.translate(m.x, m.y + bounce);
     ctx.rotate(rot);
-    ctx.scale(scale, scale);
 
     ctx.globalAlpha = 0.95;
     ctx.fillStyle = "#d63031";
@@ -691,21 +757,6 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.arc(0, 0, 8.5, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.fillStyle = "rgba(255,170,40,0.9)";
-    ctx.beginPath();
-    ctx.moveTo(0, -4);
-    ctx.lineTo(2, -1);
-    ctx.lineTo(5, -1);
-    ctx.lineTo(3, 1);
-    ctx.lineTo(4, 4);
-    ctx.lineTo(0, 2.5);
-    ctx.lineTo(-4, 4);
-    ctx.lineTo(-3, 1);
-    ctx.lineTo(-5, -1);
-    ctx.lineTo(-2, -1);
-    ctx.closePath();
-    ctx.fill();
-
     const sx = (m.shine * 30) - 15;
     ctx.save();
     ctx.globalAlpha = 0.35 + 0.25 * glow;
@@ -715,48 +766,26 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.fillRect(-2, -14, 4, 28);
     ctx.restore();
 
-    if (m.blink > 0) {
-      ctx.globalAlpha = m.blink;
-      ctx.strokeStyle = "rgba(255,255,255,0.95)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(-10, -8);
-      ctx.lineTo(10, -12);
-      ctx.stroke();
-    }
-
     ctx.restore();
   }
 
+  // --- FX ---
   function spawnSparks(x, y, intensity = 1.0) {
     const count = Math.floor(22 * intensity);
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = (2 + Math.random() * 4.5) * (0.9 + intensity * 0.5);
-      sparks.push({
-        x, y,
-        vx: Math.cos(a) * sp,
-        vy: Math.sin(a) * sp - 1.5,
-        life: 1.0,
-        size: 1.5 + Math.random() * 2.5
-      });
+      sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5, life: 1.0, size: 1.5 + Math.random() * 2.5 });
     }
   }
 
   function spawnRingExplosion(x, y, mult = 1.0) {
-    rings.push({ x, y, r: 6,  vr: 7.5 * mult,  life: 1.0, lw: 4.5 * mult });
-    rings.push({ x, y, r: 2,  vr: 10.0 * mult, life: 0.9, lw: 2.8 * mult });
+    rings.push({ x, y, r: 6, vr: 7.5 * mult, life: 1.0, lw: 4.5 * mult });
+    rings.push({ x, y, r: 2, vr: 10.0 * mult, life: 0.9, lw: 2.8 * mult });
   }
 
   function spawnTrophy(x, y) {
-    trophies.push({
-      x, y,
-      vy: -Math.random() * 2 - 2.2,
-      vx: -1.6,
-      life: 1.0,
-      rot: 0,
-      scale: 1.5 + Math.random() * 0.3
-    });
+    trophies.push({ x, y, vy: -Math.random() * 2 - 2.2, vx: -1.6, life: 1.0, rot: 0, scale: 1.6 + Math.random() * 0.35 });
     spawnSparks(x, y, 1.0);
     spawnRingExplosion(x, y, 1.0);
   }
@@ -786,18 +815,15 @@ document.addEventListener('DOMContentLoaded', () => {
   function drawSparks() {
     for (let i = sparks.length - 1; i >= 0; i--) {
       const p = sparks[i];
-      p.x += p.vx;
-      p.y += p.vy;
+      p.x += p.vx; p.y += p.vy;
       p.vy += 0.12;
       p.vx *= 0.99;
       p.life -= 0.03;
-
       if (p.life <= 0) { sparks.splice(i, 1); continue; }
 
       ctx.save();
       ctx.globalAlpha = p.life;
-      const hue = 40 + Math.random() * 20;
-      ctx.strokeStyle = hsl(hue, 90, 60);
+      ctx.strokeStyle = hsl(45 + Math.random() * 20, 90, 60);
       ctx.lineWidth = p.size;
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
@@ -813,7 +839,6 @@ document.addEventListener('DOMContentLoaded', () => {
       r.r += r.vr;
       r.vr *= 0.92;
       r.life -= 0.045;
-
       if (r.life <= 0) { rings.splice(i, 1); continue; }
 
       ctx.save();
@@ -827,74 +852,61 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function spawnFloatText(txt, x, y, kind = 'bonus') {
-    floatTexts.push({
-      txt, x, y,
-      vy: -1.6,
-      life: 1.0,
-      kind,
-      wobble: Math.random() * Math.PI * 2
-    });
+  function spawnFloatText(txt, x, y, kind) {
+    floatTexts.push({ txt, x, y, vy: -1.7, life: 1.0, kind, wobble: Math.random() * Math.PI * 2 });
   }
 
   function drawFloatTexts(tSec) {
     for (let i = floatTexts.length - 1; i >= 0; i--) {
       const ft = floatTexts[i];
       ft.y += ft.vy;
-      ft.x += Math.sin(tSec * 6 + ft.wobble) * 0.25;
+      ft.x += Math.sin(tSec * 6 + ft.wobble) * 0.35;
       ft.life -= 0.02;
-
       if (ft.life <= 0) { floatTexts.splice(i, 1); continue; }
 
       ctx.save();
       ctx.globalAlpha = ft.life;
       ctx.textAlign = "center";
       ctx.font = "12px 'Press Start 2P'";
-      if (ft.kind === 'bonus100') ctx.fillStyle = "#f1c40f";
-      else if (ft.kind === 'bonus50') ctx.fillStyle = "#2ecc71";
-      else ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = (ft.kind === 'bonus100') ? "#f1c40f" : "#2ecc71";
       ctx.fillText(ft.txt, ft.x, ft.y);
       ctx.restore();
     }
   }
 
-  // ✅ fireworks for bonuses
   function spawnFireworks(x, y, power = 1.0) {
-    // create 2-3 bursts
     const bursts = 2 + (Math.random() < 0.45 ? 1 : 0);
     for (let b = 0; b < bursts; b++) {
       const hueBase = Math.random() * 360;
-      const count = Math.floor((48 + Math.random() * 32) * power);
-      const spread = 1.9 + Math.random() * 1.2;
+      const count = Math.floor((46 + Math.random() * 36) * power);
+      const spread = 1.8 + Math.random() * 1.3;
 
       for (let i = 0; i < count; i++) {
-        const a = (i / count) * Math.PI * 2 + Math.random() * 0.18;
-        const sp = (3.0 + Math.random() * 6.0) * spread;
+        const a = (i / count) * Math.PI * 2 + Math.random() * 0.2;
+        const sp = (3.2 + Math.random() * 6.6) * spread;
         fireworks.push({
           x: x + (Math.random() * 10 - 5),
           y: y + (Math.random() * 10 - 5),
           vx: Math.cos(a) * sp,
-          vy: Math.sin(a) * sp - (1.8 + Math.random() * 1.2),
+          vy: Math.sin(a) * sp - (1.9 + Math.random() * 1.4),
           g: 0.10 + Math.random() * 0.06,
           life: 1.0,
-          hue: (hueBase + Math.random() * 40) % 360,
-          size: 1.2 + Math.random() * 1.8
+          hue: (hueBase + Math.random() * 50) % 360,
+          size: 1.3 + Math.random() * 2.0
         });
       }
     }
-    spawnRingExplosion(x, y, 1.25 * power);
-    spawnSparks(x, y, 1.6 * power);
+    spawnRingExplosion(x, y, 1.3 * power);
+    spawnSparks(x, y, 1.8 * power);
   }
 
   function drawFireworks() {
     for (let i = fireworks.length - 1; i >= 0; i--) {
       const p = fireworks[i];
-      p.x += p.vx;
-      p.y += p.vy;
+      p.x += p.vx; p.y += p.vy;
       p.vy += p.g;
       p.vx *= 0.985;
       p.life -= 0.028;
-
       if (p.life <= 0) { fireworks.splice(i, 1); continue; }
 
       ctx.save();
@@ -908,21 +920,51 @@ document.addEventListener('DOMContentLoaded', () => {
   function maybeRollBonus(x, y) {
     const r = Math.random();
     let bonus = 0;
-
     if (r < BONUS_100_CHANCE) bonus = 100;
     else if (r < BONUS_100_CHANCE + BONUS_50_CHANCE) bonus = 50;
 
     if (bonus > 0) {
       score += bonus;
-
       const power = (bonus === 100) ? 1.35 : 1.0;
-      spawnFireworks(x + 60, y - 10, power);
-
-      if (bonus === 100) spawnFloatText("+100", x + 70, y - 10, "bonus100");
-      else spawnFloatText("+50", x + 70, y - 10, "bonus50");
+      spawnFireworks(x + 64, y - 8, power);
+      spawnFloatText(bonus === 100 ? "+100" : "+50", x + 72, y - 12, bonus === 100 ? "bonus100" : "bonus50");
     }
   }
 
+  // ✅ round pixel circle fill
+  function drawPixelCircle(cx, cy, r, fill) {
+    ctx.fillStyle = fill;
+    const rr = r * r;
+    const x0 = Math.floor(cx - r), x1 = Math.ceil(cx + r);
+    const y0 = Math.floor(cy - r), y1 = Math.ceil(cy + r);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const dx = x - cx, dy = y - cy;
+        if (dx * dx + dy * dy <= rr) ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+
+  function drawBall(x, y, isHitting) {
+    const r = Math.round(BALL_DIAM / 2);
+    ctx.save();
+    ctx.translate(x, y);
+    if (isHitting) { ballRotation += 0.18; ctx.rotate(ballRotation); }
+
+    drawPixelCircle(0, 0, r + BALL_BELT, "rgba(0,0,0,0.85)");
+    drawPixelCircle(0, 0, r, "#ffffff");
+
+    const pr = Math.max(4, Math.round(r * BALL_PATCH_SCALE));
+    drawPixelCircle(0, 0, pr, "#000000");
+
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(-r + 3, -r + 4, 2 * r - 6, 1);
+    ctx.fillRect(-r + 3, r - 5, 2 * r - 6, 1);
+
+    ctx.restore();
+  }
+
+  // ---------------- END SPLASH ----------------
   function drawEndSplash() {
     if (!finishStats) return;
 
@@ -999,26 +1041,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- RENDER FRAME ----------------
   function renderFrame() {
-    // clear in BASE units (because we use setTransform scaling)
     ctx.clearRect(0, 0, BASE_W, BASE_H);
 
     const nowAudio = audioCtx ? audioCtx.currentTime : 0;
-    const tSec = (state === 'playing' || state === 'finished')
-      ? Math.max(0, nowAudio - startTime)
-      : 0;
-
-    const currentBeat = (state === 'playing' || state === 'finished')
-      ? (tSec / BEAT_DURATION) + firstNoteT
-      : firstNoteT;
+    const tSec = (state === 'playing' || state === 'finished') ? Math.max(0, nowAudio - startTime) : 0;
+    const currentBeat = (state === 'playing' || state === 'finished') ? (tSec / BEAT_DURATION) + firstNoteT : firstNoteT;
 
     const scrollX = (state === 'playing' || state === 'finished') ? (currentBeat * 80) : 0;
     drawFootballPitch(scrollX, tSec);
 
-    // medals
     updateMedals();
-    for (const m of medals) drawMedal(m, tSec);
+    medals.forEach(m => drawMedal(m, tSec));
 
-    // rhythm
+    // Rythme
     if (state === 'playing') {
       const beatIdx = Math.floor(currentBeat);
       if (beatIdx > lastProcessedBeat) {
@@ -1034,7 +1069,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // voice analysis
+    // Voix
     if (state === 'playing') {
       analyser.getFloatTimeDomainData(dataArray);
       const freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
@@ -1046,11 +1081,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // piano pitch-class
+    // Piano
     const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
     ctx.fillStyle = "#3d2516";
     ctx.fillRect(0, 0, PIANO_WIDTH, BASE_H);
-
     for (let n = 36; n < 84; n++) {
       const y = noteToY(n);
       const isBlack = names[n % 12].includes("#");
@@ -1059,7 +1093,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillRect(5, y - 7, PIANO_WIDTH - 15, 14);
     }
 
-    // melody + scoring
+    // Mélodie + scoring
     let activeMIDINote = null;
     let isHitting = false;
 
@@ -1092,7 +1126,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const f = midiToFreq(note.n);
             masterOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
             subOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
-            masterGain.gain.setTargetAtTime(0.12, audioCtx.currentTime, 0.1);
+
+            // ✅ Envelope plus fort
+            masterGain.gain.setTargetAtTime(MELODY_ENVELOPE_GAIN, audioCtx.currentTime, 0.08);
           }
 
           if (isPitchAccepted(currentVocalNote, note.n)) {
@@ -1103,8 +1139,6 @@ document.addEventListener('DOMContentLoaded', () => {
               notesHit++;
               spawnTrophy(TRIGGER_X, y);
               playHitJingle(note.n);
-
-              // ✅ bonus aléatoire + fireworks
               maybeRollBonus(TRIGGER_X, y);
             }
           }
@@ -1121,11 +1155,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (masterGain && audioCtx) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
     }
 
-    // fx updates/draw
+    // Animations
     for (let i = trophies.length - 1; i >= 0; i--) {
       const t = trophies[i];
-      t.x += t.vx;
-      t.y += t.vy;
+      t.x += t.vx; t.y += t.vy;
       t.vy += 0.12;
       t.rot += 0.08;
       t.life -= 0.012;
@@ -1138,7 +1171,7 @@ document.addEventListener('DOMContentLoaded', () => {
     drawFireworks();
     drawFloatTexts(tSec);
 
-    // ball
+    // Ballon sur note (octave accepté)
     let targetY = displayBallY;
     if (currentVocalNote) {
       let visualNote = currentVocalNote;
@@ -1147,21 +1180,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     displayBallY += (targetY - displayBallY) * 0.15;
 
-    ctx.save();
-    ctx.translate(TRIGGER_X, displayBallY);
-    if (isHitting) { ballRotation += 0.2; ctx.rotate(ballRotation); }
-    ctx.fillStyle = "white"; ctx.fillRect(-10, -10, 20, 20);
-    ctx.fillStyle = "black"; ctx.fillRect(-4, -4, 8, 8);
-    ctx.restore();
+    drawBall(TRIGGER_X, displayBallY, isHitting);
 
-    // UI values
+    // UI
     scoreEl.innerText = score;
     progressEl.innerText = (notesPassed > 0 ? Math.round((notesHit / notesPassed) * 100) : 0) + "%";
 
-    // lyrics (prev / current / next with transition)
     if (state === 'playing') renderLyrics3Lines(currentBeat);
-
-    // overlays
     if (state === 'countdown') drawCountdownOverlay(nowAudio);
     if (state === 'finished') drawEndSplash();
 
@@ -1219,13 +1244,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // ---------------- START / REPLAY ----------------
   startBtn.onclick = async () => {
     await initAudio();
-    applyResponsiveLayout(); // ✅ ensure correct scaling after audio permissions
-
+    applyResponsiveLayout();
     setupLyricsBoxStyle();
+
     if (!lyricsLoaded) await loadLyricsTxt();
     if (lyricsLoaded) buildLyricsSchedule();
 
     resetRunState();
+    applyVolumes();
 
     startBtn.classList.add('hidden');
     gameBtnsDiv.classList.remove('hidden');
@@ -1236,23 +1262,19 @@ document.addEventListener('DOMContentLoaded', () => {
     countdownStart = audioCtx.currentTime;
     playStartCountdownJingle(countdownStart);
 
-    lyricDiv.innerHTML =
-      `<div style="color:rgba(255,255,255,0.42); text-shadow:2px 2px #000;"> </div>
-       <div style="color:#fff; text-shadow:2px 2px #000; font-weight:700;">READY...</div>
-       <div style="color:rgba(255,255,255,0.35); text-shadow:2px 2px #000;"> </div>`;
-
     loop();
   };
 
   replayBtn.onclick = async () => {
     await initAudio();
     applyResponsiveLayout();
-
     setupLyricsBoxStyle();
+
     if (!lyricsLoaded) await loadLyricsTxt();
     if (lyricsLoaded) buildLyricsSchedule();
 
     resetRunState();
+    applyVolumes();
 
     if (stadium.isLoaded) startStadiumLoop();
 
