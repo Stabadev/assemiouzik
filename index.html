@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mario Vocal - Football & Rock Karaoke</title>
+    <script type="module">
+        import MidiPlayer from 'https://cdn.skypack.dev/midi-player-js';
+        window.MidiPlayer = MidiPlayer;
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body { 
+            background: #a0d8ef; 
+            font-family: 'Press Start 2P', cursive; 
+            margin: 0; display: flex; flex-direction: column; align-items: center;
+            overflow: hidden;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.8);
+            width: 100%; padding: 15px 0;
+            border-bottom: 6px solid #55aa33;
+            color: #fff; text-align: center;
+        }
+
+        #game-container {
+            position: relative;
+            width: 950px; height: 460px;
+            margin-top: 15px;
+            border: 8px solid #3d2516;
+            border-radius: 8px;
+            background: linear-gradient(#87ceeb, #e0f6ff);
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        #lyrics-display {
+            width: 950px; height: 60px;
+            background: #222; border: 6px solid #3d2516;
+            margin-top: 10px; display: flex;
+            align-items: center; justify-content: center;
+            color: #f1c40f; font-size: 14px;
+            text-shadow: 2px 2px #000; text-align: center;
+            padding: 0 12px; box-sizing: border-box;
+        }
+
+        .ui-overlay {
+            position: absolute; top: 15px; left: 100px; right: 20px;
+            display: flex; justify-content: space-between;
+            font-size: 10px; pointer-events: none; z-index: 10;
+            gap: 10px;
+        }
+
+        #progress-val { color: #2ecc71; text-shadow: 2px 2px #000; }
+
+        .controls { 
+            margin-top: 10px; text-align: center; 
+            background: rgba(255,255,255,0.2); padding: 15px; border-radius: 10px;
+            width: 950px; box-sizing: border-box;
+        }
+
+        .toggle-group { margin-bottom: 10px; }
+
+        button {
+            padding: 12px 18px; font-family: 'Press Start 2P';
+            font-size: 8px; cursor: pointer;
+            border: 4px solid #000; border-radius: 6px;
+            margin: 0 5px; transition: transform 0.1s;
+        }
+
+        button:active { transform: scale(0.95); }
+        #startBtn { background: #ff4757; color: white; font-size: 12px; }
+        .btn-off { background: #95a5a6; color: #fff; }
+        .btn-on { background: #2ecc71; color: #fff; }
+        .hidden { display: none; }
+
+        @media (max-width: 1000px) {
+            #game-container, #lyrics-display, .controls { width: 96vw; }
+            #game-container { height: 46vw; max-height: 460px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2 style="font-size: 14px; margin: 0;">STAGE 1-1: ROCK VOCAL TRAINING</h2>
+    </div>
+
+    <div id="game-container">
+        <div class="ui-overlay">
+            <div>PROGRESSION: <span id="progress-val">0%</span></div>
+            <div>POINTS: <span id="score-val">0</span></div>
+        </div>
+        <canvas id="gameCanvas" width="950" height="460"></canvas>
+    </div>
+
+    <div id="lyrics-display">PRÊT POUR LA SESSION ?</div>
+
+    <div class="controls">
+        <div id="loading-status" style="font-size:9px; margin-bottom:10px;">CHARGEMENT DU STAGE...</div>
+        <div class="toggle-group">
+            <button id="btnMetro" class="btn-off">METRONOME: OFF</button>
+            <button id="btnDrum" class="btn-off">BATTERIE ROCK: OFF</button>
+        </div>
+        <button id="startBtn" class="hidden">START SESSION</button>
+        <div id="game-btns" class="hidden">
+            <button id="stopBtn" style="background:#555; color: white;">QUITTER</button>
+            <button id="replayBtn" style="background:#2ecc71; color: white;">RETRY</button>
+        </div>
+    </div>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
