@@ -3,6 +3,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const ctx = canvas.getContext('2d');
   const lyricDiv = document.getElementById('lyrics-display');
 
+  const container = document.getElementById('game-container');
+  const progressEl = document.getElementById('progress-val');
+  const scoreEl = document.getElementById('score-val');
+
   // UI
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
@@ -18,12 +22,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ✅ Lyrics TXT
   const LYRICS_FILE_PATH = 'lyrics.txt';
-  const BEATS_PER_LYRIC_LINE = 8; // 2 mesures (4/4) = 8 beats
+  const BEATS_PER_LYRIC_LINE = 8;
 
-  // 🔉 foule
-  const STADIUM_VOL = 0.065;
+  // ✅ responsive base design size (do not change drawings coords)
+  const BASE_W = 950;
+  const BASE_H = 460;
 
-  // gameplay
+  // 🔉 foule (baisse un peu)
+  const STADIUM_VOL = 0.045;
+
+  // gameplay (in BASE units)
   const PIXELS_PER_BEAT = 220;
   const NOTE_HEIGHT_UNIT = 15;
   const CENTER_NOTE = 60;
@@ -41,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const OCTAVE_SEMI = 12;
   const OCTAVE_TOL = 1.8;
 
-  // fin
+  // end
   const END_PADDING_BEATS = 2.0;
 
   // countdown
@@ -53,8 +61,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const START_JINGLE_VOL = 0.10;
 
   // bonus
-  const BONUS_50_CHANCE = 0.12;
-  const BONUS_100_CHANCE = 0.05;
+  const BONUS_50_CHANCE = 0.14;
+  const BONUS_100_CHANCE = 0.06;
 
   // ---------------- HELPERS ----------------
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
@@ -100,6 +108,39 @@ document.addEventListener('DOMContentLoaded', () => {
       .replaceAll("'", "&#039;");
   }
 
+  // ---------------- RESPONSIVE LAYOUT ----------------
+  // Make #game-container and lyric box fit phone portrait; keep drawings in BASE coords with scale.
+  function applyResponsiveLayout() {
+    // container width = viewport width minus a bit
+    const vw = Math.max(320, window.innerWidth);
+    const margin = 16;
+    const targetW = Math.min(BASE_W, vw - margin);
+    const targetH = Math.round(targetW * (BASE_H / BASE_W));
+
+    // override fixed CSS sizes (mobile-friendly)
+    container.style.width = `${targetW}px`;
+    container.style.height = `${targetH}px`;
+
+    // canvas CSS size
+    canvas.style.width = `${targetW}px`;
+    canvas.style.height = `${targetH}px`;
+
+    // set real pixel buffer with DPR
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(targetW * dpr);
+    canvas.height = Math.round(targetH * dpr);
+
+    // keep lyrics aligned to game width
+    lyricDiv.style.width = `${targetW}px`;
+
+    // scale drawings from BASE units to current display
+    const unitScale = targetW / BASE_W;
+    ctx.setTransform(dpr * unitScale, 0, 0, dpr * unitScale, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+  }
+  window.addEventListener('resize', () => applyResponsiveLayout(), { passive: true });
+  applyResponsiveLayout();
+
   // ---------------- STATE ----------------
   let melody = [];
   let firstNoteT = 0;
@@ -141,6 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let sparks = [];
   let rings = [];
   let floatTexts = [];
+  let fireworks = []; // ✅ dedicated fireworks particles for bonus
 
   // 🏅 medals
   const medals = [];
@@ -221,7 +263,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch(LYRICS_FILE_PATH);
       if (!res.ok) throw new Error(`fetch lyrics.txt failed: ${res.status}`);
       const text = await res.text();
-
       lyricsRawLines = text.replace(/\r/g, '').split('\n');
       lyricsLoaded = true;
     } catch (e) {
@@ -232,11 +273,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Règles :
   // - ligne vide => +8 beats
   // - "# ..." => ignore
-  // - "~N" => pause N blocs (N*8 beats)
-  // - "pause N" => idem
+  // - "~N" / "pause N" => pause N blocs
   // - "@BEATS texte" => placement absolu (beat = firstNoteT + BEATS)
   function buildLyricsSchedule() {
     lyricsItems = [];
@@ -313,8 +352,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return ans;
   }
 
-  // ✅ NOUVEAU : 3 lignes = précédente (gris) / actuelle (blanc) / suivante (gris->blanc transition)
-  // Transition : la ligne suivante "blanchit" progressivement pendant les 8 beats de la ligne actuelle.
+  // 3 lignes : précédente (gris) / actuelle (blanc) / suivante (gris->blanc transition)
   function renderLyrics3Lines(currentBeat) {
     if (!lyricsLoaded || !lyricsItems || lyricsItems.length === 0) return;
 
@@ -324,16 +362,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const curText  = (idx >= 0) ? (lyricsItems[idx]?.text || "") : "";
     const nextText = (idx >= 0) ? (lyricsItems[idx + 1]?.text || "") : (lyricsItems[0]?.text || "");
 
-    // progression intra-bloc sur 8 beats
     let prog = 0;
     if (idx >= 0) {
       const curBeat0 = lyricsItems[idx].beat;
       prog = clamp((currentBeat - curBeat0) / BEATS_PER_LYRIC_LINE, 0, 1);
     }
 
-    // couleur suivante (gris -> blanc)
     const nextAlpha = 0.35 + 0.65 * prog;  // 0.35 -> 1.0
-    const nextGlow  = 0.15 + 0.45 * prog;  // glow léger qui monte
+    const nextGlow  = 0.12 + 0.45 * prog;
 
     const prevHtml = prevText
       ? `<div style="color:rgba(255,255,255,0.42); text-shadow:2px 2px #000;">${escapeHtml(prevText)}</div>`
@@ -427,7 +463,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const t = audioCtx.currentTime;
     stadium.gain.gain.cancelScheduledValues(t);
     stadium.gain.gain.setValueAtTime(0.0001, t);
-    stadium.gain.gain.exponentialRampToValueAtTime(STADIUM_VOL, t + 0.40);
+    stadium.gain.gain.exponentialRampToValueAtTime(STADIUM_VOL, t + 0.45);
 
     src.start(t);
     stadium.source = src;
@@ -565,8 +601,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- VISUALS ----------------
   function drawFootballPitch(scrollX, tSec) {
-    const W = canvas.width;
-    const H = canvas.height;
+    const W = BASE_W;
+    const H = BASE_H;
 
     const hue = 115 + 12 * Math.sin(tSec * 0.35);
     const stripeW = 120;
@@ -692,11 +728,11 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.restore();
   }
 
-  function spawnSparks(x, y) {
-    const count = 22;
+  function spawnSparks(x, y, intensity = 1.0) {
+    const count = Math.floor(22 * intensity);
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = 2 + Math.random() * 4.5;
+      const sp = (2 + Math.random() * 4.5) * (0.9 + intensity * 0.5);
       sparks.push({
         x, y,
         vx: Math.cos(a) * sp,
@@ -707,9 +743,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function spawnRingExplosion(x, y) {
-    rings.push({ x, y, r: 6,  vr: 7.5,  life: 1.0, lw: 4.5 });
-    rings.push({ x, y, r: 2,  vr: 10.0, life: 0.9, lw: 2.8 });
+  function spawnRingExplosion(x, y, mult = 1.0) {
+    rings.push({ x, y, r: 6,  vr: 7.5 * mult,  life: 1.0, lw: 4.5 * mult });
+    rings.push({ x, y, r: 2,  vr: 10.0 * mult, life: 0.9, lw: 2.8 * mult });
   }
 
   function spawnTrophy(x, y) {
@@ -721,8 +757,8 @@ document.addEventListener('DOMContentLoaded', () => {
       rot: 0,
       scale: 1.5 + Math.random() * 0.3
     });
-    spawnSparks(x, y);
-    spawnRingExplosion(x, y);
+    spawnSparks(x, y, 1.0);
+    spawnRingExplosion(x, y, 1.0);
   }
 
   function drawTrophy(t) {
@@ -822,6 +858,53 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // ✅ fireworks for bonuses
+  function spawnFireworks(x, y, power = 1.0) {
+    // create 2-3 bursts
+    const bursts = 2 + (Math.random() < 0.45 ? 1 : 0);
+    for (let b = 0; b < bursts; b++) {
+      const hueBase = Math.random() * 360;
+      const count = Math.floor((48 + Math.random() * 32) * power);
+      const spread = 1.9 + Math.random() * 1.2;
+
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + Math.random() * 0.18;
+        const sp = (3.0 + Math.random() * 6.0) * spread;
+        fireworks.push({
+          x: x + (Math.random() * 10 - 5),
+          y: y + (Math.random() * 10 - 5),
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp - (1.8 + Math.random() * 1.2),
+          g: 0.10 + Math.random() * 0.06,
+          life: 1.0,
+          hue: (hueBase + Math.random() * 40) % 360,
+          size: 1.2 + Math.random() * 1.8
+        });
+      }
+    }
+    spawnRingExplosion(x, y, 1.25 * power);
+    spawnSparks(x, y, 1.6 * power);
+  }
+
+  function drawFireworks() {
+    for (let i = fireworks.length - 1; i >= 0; i--) {
+      const p = fireworks[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += p.g;
+      p.vx *= 0.985;
+      p.life -= 0.028;
+
+      if (p.life <= 0) { fireworks.splice(i, 1); continue; }
+
+      ctx.save();
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle = hsl(p.hue, 95, 65);
+      ctx.fillRect(p.x, p.y, p.size, p.size);
+      ctx.restore();
+    }
+  }
+
   function maybeRollBonus(x, y) {
     const r = Math.random();
     let bonus = 0;
@@ -831,8 +914,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (bonus > 0) {
       score += bonus;
-      spawnRingExplosion(x, y);
-      spawnSparks(x, y);
+
+      const power = (bonus === 100) ? 1.35 : 1.0;
+      spawnFireworks(x + 60, y - 10, power);
+
       if (bonus === 100) spawnFloatText("+100", x + 70, y - 10, "bonus100");
       else spawnFloatText("+50", x + 70, y - 10, "bonus50");
     }
@@ -840,36 +925,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function drawEndSplash() {
     if (!finishStats) return;
-    const W = canvas.width;
-    const H = canvas.height;
 
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, BASE_W, BASE_H);
 
     ctx.fillStyle = "rgba(255,255,255,0.10)";
-    ctx.fillRect(110, 70, W - 220, H - 140);
+    ctx.fillRect(110, 70, BASE_W - 220, BASE_H - 140);
 
     ctx.strokeStyle = "rgba(255,255,255,0.8)";
     ctx.lineWidth = 4;
-    ctx.strokeRect(110, 70, W - 220, H - 140);
+    ctx.strokeRect(110, 70, BASE_W - 220, BASE_H - 140);
 
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffffff";
     ctx.font = "44px 'Press Start 2P'";
-    ctx.fillText("BRAVO !", W / 2, 150);
+    ctx.fillText("BRAVO !", BASE_W / 2, 150);
 
     ctx.fillStyle = "#f1c40f";
     ctx.font = "18px 'Press Start 2P'";
-    ctx.fillText(`SCORE: ${finishStats.score}`, W / 2, 230);
+    ctx.fillText(`SCORE: ${finishStats.score}`, BASE_W / 2, 230);
 
     ctx.fillStyle = "#2ecc71";
     ctx.font = "14px 'Press Start 2P'";
-    ctx.fillText(`PRECISION: ${finishStats.accuracy}%`, W / 2, 275);
+    ctx.fillText(`PRECISION: ${finishStats.accuracy}%`, BASE_W / 2, 275);
 
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = "12px 'Press Start 2P'";
-    ctx.fillText("RETRY POUR REJOUER", W / 2, 335);
+    ctx.fillText("RETRY POUR REJOUER", BASE_W / 2, 335);
 
     ctx.restore();
   }
@@ -900,23 +983,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, BASE_W, BASE_H);
 
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffffff";
     ctx.font = "70px 'Press Start 2P'";
-    ctx.fillText(label, canvas.width / 2, canvas.height / 2);
+    ctx.fillText(label, BASE_W / 2, BASE_H / 2);
 
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = "12px 'Press Start 2P'";
-    ctx.fillText("PREPARE TA VOIX !", canvas.width / 2, canvas.height / 2 + 70);
+    ctx.fillText("PREPARE TA VOIX !", BASE_W / 2, BASE_H / 2 + 70);
 
     ctx.restore();
   }
 
   // ---------------- RENDER FRAME ----------------
   function renderFrame() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // clear in BASE units (because we use setTransform scaling)
+    ctx.clearRect(0, 0, BASE_W, BASE_H);
 
     const nowAudio = audioCtx ? audioCtx.currentTime : 0;
     const tSec = (state === 'playing' || state === 'finished')
@@ -934,7 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateMedals();
     for (const m of medals) drawMedal(m, tSec);
 
-    // rythme
+    // rhythm
     if (state === 'playing') {
       const beatIdx = Math.floor(currentBeat);
       if (beatIdx > lastProcessedBeat) {
@@ -950,7 +1034,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // analyse voix
+    // voice analysis
     if (state === 'playing') {
       analyser.getFloatTimeDomainData(dataArray);
       const freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
@@ -965,7 +1049,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // piano pitch-class
     const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
     ctx.fillStyle = "#3d2516";
-    ctx.fillRect(0, 0, PIANO_WIDTH, canvas.height);
+    ctx.fillRect(0, 0, PIANO_WIDTH, BASE_H);
 
     for (let n = 36; n < 84; n++) {
       const y = noteToY(n);
@@ -988,12 +1072,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const y = noteToY(note.n);
 
-        if (xE > PIANO_WIDTH && xS < canvas.width) {
+        if (xE > PIANO_WIDTH && xS < BASE_W) {
           ctx.fillStyle = note.validated ? "rgba(46,204,113,0.85)" : "rgba(231,76,60,0.85)";
           ctx.fillRect(xS, y - 8, xE - xS, 16);
         }
 
-        const isActive = (currentBeat >= note.t && (melody[i + 1] ? currentBeat < melody[i + 1].t : currentBeat < note.t + note.d));
+        const isActive = (
+          currentBeat >= note.t &&
+          (melody[i + 1] ? currentBeat < melody[i + 1].t : currentBeat < note.t + note.d)
+        );
 
         if (isActive) {
           activeMIDINote = note;
@@ -1016,6 +1103,8 @@ document.addEventListener('DOMContentLoaded', () => {
               notesHit++;
               spawnTrophy(TRIGGER_X, y);
               playHitJingle(note.n);
+
+              // ✅ bonus aléatoire + fireworks
               maybeRollBonus(TRIGGER_X, y);
             }
           }
@@ -1032,7 +1121,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (masterGain && audioCtx) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
     }
 
-    // fx
+    // fx updates/draw
     for (let i = trophies.length - 1; i >= 0; i--) {
       const t = trophies[i];
       t.x += t.vx;
@@ -1043,11 +1132,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (t.life <= 0) trophies.splice(i, 1);
       else drawTrophy(t);
     }
+
     drawRings();
     drawSparks();
+    drawFireworks();
     drawFloatTexts(tSec);
 
-    // ballon
+    // ball
     let targetY = displayBallY;
     if (currentVocalNote) {
       let visualNote = currentVocalNote;
@@ -1064,14 +1155,11 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.restore();
 
     // UI values
-    document.getElementById('score-val').innerText = score;
-    document.getElementById('progress-val').innerText =
-      (notesPassed > 0 ? Math.round((notesHit / notesPassed) * 100) : 0) + "%";
+    scoreEl.innerText = score;
+    progressEl.innerText = (notesPassed > 0 ? Math.round((notesHit / notesPassed) * 100) : 0) + "%";
 
-    // ✅ lyrics (prev / current / next with transition)
-    if (state === 'playing') {
-      renderLyrics3Lines(currentBeat);
-    }
+    // lyrics (prev / current / next with transition)
+    if (state === 'playing') renderLyrics3Lines(currentBeat);
 
     // overlays
     if (state === 'countdown') drawCountdownOverlay(nowAudio);
@@ -1115,7 +1203,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ---------------- RESET ----------------
   function resetRunState() {
     score = 0; notesPassed = 0; notesHit = 0;
-    trophies = []; sparks = []; rings = []; floatTexts = [];
+    trophies = []; sparks = []; rings = []; floatTexts = []; fireworks = [];
     lastProcessedBeat = -1;
 
     medianBuffer.length = 0;
@@ -1131,9 +1219,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ---------------- START / REPLAY ----------------
   startBtn.onclick = async () => {
     await initAudio();
+    applyResponsiveLayout(); // ✅ ensure correct scaling after audio permissions
 
     setupLyricsBoxStyle();
-
     if (!lyricsLoaded) await loadLyricsTxt();
     if (lyricsLoaded) buildLyricsSchedule();
 
@@ -1158,9 +1246,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   replayBtn.onclick = async () => {
     await initAudio();
+    applyResponsiveLayout();
 
     setupLyricsBoxStyle();
-
     if (!lyricsLoaded) await loadLyricsTxt();
     if (lyricsLoaded) buildLyricsSchedule();
 
