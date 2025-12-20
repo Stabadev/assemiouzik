@@ -2,10 +2,12 @@
  * app.js — version avec :
  * - pseudo en fin de partie + URL signée
  * - affichage du beat
- * - dernière note sustain au moins 4 beats (timeline prolongée)
- * - certificat de réussite avec médaille, pseudo, score, date
- * - texte RETRY -> vrai bouton cliquable sur le canvas pour relancer la session
- * - plus de bouton PARTAGER (reste seulement COPIER LE LIEN)
+ * - dernière note sustain au moins 4 beats
+ * - certificat de réussite (médaille, pseudo, score, date)
+ * - phrase aléatoire sur le certificat
+ * - bouton RETRY cliquable sur le canvas
+ * - plus de bouton PARTAGER (juste COPIER LE LIEN)
+ * - bandeau PROGRESSION/POINTS/BEAT caché en mode certificat
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -17,6 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const progressEl = document.getElementById('progress-val');
   const scoreEl = document.getElementById('score-val');
   const beatEl = document.getElementById('beat-val');
+
+  const uiOverlay = document.querySelector('.ui-overlay');
 
   // UI jeux
   const startBtn = document.getElementById('startBtn');
@@ -100,6 +104,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const BALL_DIAM = 28;
   const BALL_BELT = 2;
   const BALL_PATCH_SCALE = 0.32;
+
+  const END_QUOTES = [
+    "Bravo! Partage avec tes copains et sur les réseaux",
+    "QUELLE VOIX! On t'attends à GG pour mettre le feu!",
+    "TOI on te veut comme future CAPO"
+  ];
+
+  function pickEndQuote() {
+    const i = Math.floor(Math.random() * END_QUOTES.length);
+    return END_QUOTES[i];
+  }
 
   // ---------------- VOLUMES ----------------
   const volumes = {
@@ -259,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let state = 'idle'; // 'idle'|'countdown'|'playing'|'finished'
   let startTime = 0;
   let countdownStart = 0;
-  let finishStats = null; // {score, accuracy, nick?, date?}
+  let finishStats = null; // {score, accuracy, nick?, date?, quote?}
 
   let currentVocalNote = 60;
   let displayBallY = noteToY(60);
@@ -1116,11 +1131,17 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillText(`DATE: ${finishStats.date}`, BASE_W / 2, 330);
     }
 
+    if (finishStats.quote) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "10px 'Press Start 2P'";
+      ctx.fillText(finishStats.quote, BASE_W / 2, 360, BASE_W - 260);
+    }
+
     // Bouton RETRY cliquable sur le canvas
     const btnW = 220;
     const btnH = 40;
     const btnX = BASE_W / 2 - btnW / 2;
-    const btnY = 360;
+    const btnY = 385;
 
     retryCanvasButton = { x: btnX, y: btnY, w: btnW, h: btnH };
 
@@ -1169,6 +1190,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!finishStats) return;
     const dateStr = computeTodayDateStr();
     finishStats.date = dateStr;
+    finishStats.quote = pickEndQuote();
 
     endTitle.innerText = "BRAVO !";
     endSummary.innerText = `Score: ${finishStats.score} | Précision: ${finishStats.accuracy}% | Date: ${dateStr}`;
@@ -1184,6 +1206,7 @@ document.addEventListener('DOMContentLoaded', () => {
     endMessage.innerText = "Entre ton pseudo pour générer ton certificat.";
     lastShareUrl = null;
 
+    if (uiOverlay) uiOverlay.style.display = 'none';
     setOverlayModeForm();
   }
 
@@ -1192,7 +1215,8 @@ document.addEventListener('DOMContentLoaded', () => {
       score: shared.score,
       accuracy: shared.accuracy,
       nick: shared.nick,
-      date: shared.date
+      date: shared.date,
+      quote: pickEndQuote()
     };
 
     endTitle.innerText = "CERTIFICAT DE RÉUSSITE";
@@ -1209,13 +1233,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     lastShareUrl = window.location.href;
 
+    if (uiOverlay) uiOverlay.style.display = 'none';
     setOverlayModeFinal();
   }
 
   function finishGame() {
     state = 'finished';
     const accuracy = (notesPassed > 0) ? Math.round((notesHit / notesPassed) * 100) : 0;
-    finishStats = { score, accuracy };
+    finishStats = { score, accuracy, quote: pickEndQuote() };
 
     lyricDiv.innerHTML = `<div style="color:#fff; text-shadow:2px 2px #000;">FIN DE PARTIE !</div>`;
     gameBtnsDiv.classList.remove('hidden');
@@ -1223,6 +1248,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (masterGain && audioCtx) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
     stopStadiumLoop();
+    if (uiOverlay) uiOverlay.style.display = 'none';
 
     drawEndSplash();
     showEndOverlayForFreshRun();
@@ -1343,7 +1369,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isActive) {
           activeMIDINote = note;
 
-          const timeSinceNoteStart = currentBeat - note.t; // en beats
+          const timeSinceNoteStart = currentBeat - note.t; // beats
           const isLastNote = (i === melody.length - 1);
           const sustainBeats = isLastNote ? 4.0 : 2.0;
 
@@ -1433,6 +1459,7 @@ document.addEventListener('DOMContentLoaded', () => {
         state = 'playing';
         startTime = audioCtx.currentTime;
         lastProcessedBeat = -1;
+        if (uiOverlay) uiOverlay.style.display = 'flex';
       }
       requestAnimationFrame(loop);
       return;
@@ -1503,6 +1530,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     endMessage.innerText = "";
 
+    if (uiOverlay) uiOverlay.style.display = 'flex';
+
     loop();
   }
 
@@ -1524,7 +1553,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state !== 'finished' || !retryCanvasButton) return;
 
     const rect = canvas.getBoundingClientRect();
-    // conversion coords écran -> coords logiques (BASE_W / BASE_H)
     const x = (ev.clientX - rect.left) * (BASE_W / rect.width);
     const y = (ev.clientY - rect.top) * (BASE_H / rect.height);
 
@@ -1556,6 +1584,7 @@ document.addEventListener('DOMContentLoaded', () => {
       finishStats.date = computeTodayDateStr();
     }
     finishStats.nick = nick;
+    if (!finishStats.quote) finishStats.quote = pickEndQuote();
 
     const url = buildShareUrl(nick, finishStats.score, finishStats.accuracy, finishStats.date);
     lastShareUrl = url;
@@ -1571,6 +1600,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pseudoRow.classList.add('hidden');
     saveRow.classList.add('hidden');
 
+    if (uiOverlay) uiOverlay.style.display = 'none';
     setOverlayModeFinal();
     renderFrame();
   });
@@ -1610,9 +1640,12 @@ document.addEventListener('DOMContentLoaded', () => {
         score: shared.score,
         accuracy: shared.accuracy,
         nick: shared.nick,
-        date: shared.date
+        date: shared.date,
+        quote: pickEndQuote()
       };
       lastShareUrl = window.location.href;
+
+      if (uiOverlay) uiOverlay.style.display = 'none';
 
       renderFrame();
       showEndOverlayFromShared(shared);
