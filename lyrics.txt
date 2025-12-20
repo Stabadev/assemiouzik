@@ -1,33 +1,45 @@
-Dans le vestiaire avant de rentrer
-Pour commencer à nous échauffer
-Tous en choeur nous chantons
-On est les rois du Ballon          
-Onnnnn.. Quand on arrive sur le terrain
-On les entend frapper dans leurs mains
-Avec eux nous chantons
-Saint-Etienne sera champion Onnn.         
+@1 Dans le vestiaire avant de rentrer
+@8 Pour commencer à nous échauffer
+@15 Tous 
+@16 en choeur nous chantons
+@24 On est les rois du Ballon  
+@30 (Pause)        
+@35 Quand on arrive sur le terrain
+@44 On les entend frapper dans leurs mains
+@52 Avec eux nous chantons
+@60 Saint-Etienne sera champion 
+@68 Oonnn..         
 
-Allez! Qui c'est les plus forts?
-Évidemment c'est les verts
-On a un bon public et les meilleurs supporters
-On va gagner! Ça c'est juré. Allez! 
-Allez! Qui c'est les plus forts?
-Évidemment, c'est les verts
-Nous, on joue au football et on n'a pas de frontières
+@72 Allez! 
+@76 Qui c'est les plus forts?
+@80 Évidemment c'est les verts
+@84 On a un bon public et les 
+@88 meilleurs supporters
+@92 On va gagner! 
+@96 Ça c'est juré. 
+@98 Allez! 
+@104 Allez! 
+@107 Qui c'est les plus forts?
+@111 Évidemment, c'est les verts
+@115 Nous, on joue au football et on n'a 
+@119 pas de frontières
+@123 Main dans la main 
+@127 on va plus loin, plus 
+@131 loin
+@135 Allez, 
+@139 allez 
+@143 les verts!
+@151 Nos supporters sont venus de loin,
+@159 Ils sont fidèles et ils nous aiment bien
+@167 Ils font sauter les bouchons
+@175 Quand Saint-Etienne est champion Onnn..        
+@187 Allez! Qui c'est les plus forts?
+@195 Évidemment, c'est les verts
+@199 On a un bon public et les meilleurs supporters
+@207 On va gagner! Ça c'est juré. 
+@211 Allez!
+@219 Allez! Qui c'est les plus forts?
+@227 Évidemment, c'est les verts
+@231 Nous, on joue au football et on n'a pas de frontières
 Main dans la main on va plus loin, plus loin
-Allez, allez les verts!
-
-Nos supporters sont venus de loin,
-Ils sont fidèles et ils nous aiment bien
-Ils font sauter les bouchons
-Quand Saint-Etienne est champion Onnn..        
-Allez! Qui c'est les plus forts?
-Évidemment, c'est les verts
-On a un bon public et les meilleurs supporters
-On va gagner! Ça c'est juré. Allez!
-Allez! Qui c'est les plus forts?
-Évidemment, c'est les verts
-Nous, on joue au football et on n'a pas de frontières
-Main dans la main on va plus loin, plus loin
-Allez, allez les verts!
 Allez, allez les verts! ...

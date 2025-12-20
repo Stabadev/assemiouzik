@@ -1,18 +1,11 @@
 /**
- * app.js — VERSION COMPLETE (copier/coller)
- * ✅ Mélodie (guide) BEAUCOUP plus forte :
- *   - volumes.melody par défaut = 1.00
- *   - applyVolumes : melodyBusGain plus élevé (jusqu’à ~1.15)
- *   - envelope masterGain plus élevé (0.22 au lieu de 0.12)
- *   - compresseur sur la sortie mélodie pour éviter la saturation
- *
- * Le reste :
- * - Ballon rond pixel-art + ceinture
- * - Volumes réglables (mélodie / foule / metronome / batterie)
- * - Terrain de foot qui défile, médailles animées, coupes + étincelles, anneaux
- * - Bonus +50/+100 aléatoires avec feu d’artifice + texte flottant
- * - Lyrics depuis lyrics.txt : précédente (gris), actuelle (blanc), suivante (gris qui monte en intensité)
- * - Countdown + jingle départ, jingle note juste
+ * app.js — version avec :
+ * - pseudo en fin de partie + URL signée
+ * - affichage du beat
+ * - dernière note sustain au moins 4 beats (timeline prolongée)
+ * - certificat de réussite avec médaille, pseudo, score, date
+ * - texte RETRY -> vrai bouton cliquable sur le canvas pour relancer la session
+ * - plus de bouton PARTAGER (reste seulement COPIER LE LIEN)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -23,8 +16,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const container = document.getElementById('game-container');
   const progressEl = document.getElementById('progress-val');
   const scoreEl = document.getElementById('score-val');
+  const beatEl = document.getElementById('beat-val');
 
-  // UI
+  // UI jeux
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
   const replayBtn = document.getElementById('replayBtn');
@@ -34,11 +28,42 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDrum = document.getElementById('btnDrum');
   const controlsRoot = document.querySelector('.controls');
 
+  // Overlay de fin
+  const endScreen = document.getElementById('end-screen-ui');
+  const endPanel = document.querySelector('.end-panel');
+  const endTitle = document.getElementById('end-title');
+  const endSummary = document.getElementById('end-summary');
+  const pseudoRow = document.getElementById('pseudo-row');
+  const nicknameInput = document.getElementById('nickname-input');
+  const saveScoreBtn = document.getElementById('save-score-btn');
+  const saveRow = document.getElementById('save-row');
+  const copyUrlBtn = document.getElementById('copy-url-btn');
+  const endMessage = document.getElementById('end-message');
+  const shareActions = document.getElementById('share-actions');
+
+  endScreen.classList.add('hidden');
+  let lastShareUrl = null;
+
+  // Dock bas pour le bouton "COPIER LE LIEN" en mode certificat
+  const shareDock = document.createElement('div');
+  shareDock.id = 'share-dock';
+  shareDock.style.position = 'absolute';
+  shareDock.style.left = '50%';
+  shareDock.style.bottom = '30px';
+  shareDock.style.transform = 'translateX(-50%)';
+  shareDock.style.display = 'none';
+  shareDock.style.textAlign = 'center';
+  shareDock.style.pointerEvents = 'auto';
+
+  shareActions.classList.remove('hidden');
+  shareDock.appendChild(shareActions);
+  endScreen.appendChild(shareDock);
+
   // ---------------- CONFIG ----------------
   const MIDI_FILE_PATH = 'musique.mid';
   const STADIUM_FILE_PATH = 'stadium.mp3';
-
   const LYRICS_FILE_PATH = 'lyrics.txt';
+
   const BEATS_PER_LYRIC_LINE = 8;
 
   const BASE_W = 950;
@@ -70,19 +95,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const BONUS_50_CHANCE = 0.18;
   const BONUS_100_CHANCE = 0.08;
 
-  // ✅ Mélodie plus forte (envelope)
-  const MELODY_ENVELOPE_GAIN = 0.22; // was 0.12
+  const MELODY_ENVELOPE_GAIN = 0.22;
 
-  // Ballon rond
   const BALL_DIAM = 28;
   const BALL_BELT = 2;
   const BALL_PATCH_SCALE = 0.32;
 
   // ---------------- VOLUMES ----------------
-  // ✅ Mélodie à fond par défaut
   const volumes = {
-    melody: 1.00,     // was 0.95
-    stadium: 0.16,    // un peu bas pour laisser la place à la mélodie
+    melody: 1.00,
+    stadium: 0.16,
     metronome: 0.55,
     drums: 0.50
   };
@@ -130,6 +152,55 @@ document.addEventListener('DOMContentLoaded', () => {
       .replaceAll("'", "&#039;");
   }
 
+  // ----------- SIGNATURE & URL SCORE -----------
+  const SCORE_SALT = 'MVOCAL42_SALT';
+
+  function makeSignature(nick, score, accuracy, dateStr) {
+    const safeNick = (nick || '').toUpperCase();
+    const s = `${safeNick}|${score}|${accuracy}|${dateStr}|${SCORE_SALT}`;
+    let h1 = 0, h2 = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      h1 = (h1 * 31 + c) & 0xffffffff;
+      h2 = (h2 * 131 + c) & 0xffffffff;
+    }
+    const mixed = (h1 >>> 0).toString(16) + (h2 >>> 0).toString(16);
+    return mixed.slice(0, 16);
+  }
+
+  function buildShareUrl(nick, score, accuracy, dateStr) {
+    const params = new URLSearchParams(window.location.search);
+    params.set('nick', nick);
+    params.set('score', String(score));
+    params.set('acc', String(accuracy));
+    params.set('date', dateStr);
+    params.set('sig', makeSignature(nick, score, accuracy, dateStr));
+    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', url);
+    lastShareUrl = url;
+    return url;
+  }
+
+  function parseSharedFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const nick = params.get('nick');
+    const scoreStr = params.get('score');
+    const accStr = params.get('acc');
+    const dateStr = params.get('date');
+    const sig = params.get('sig');
+
+    if (!nick || !scoreStr || !accStr || !dateStr || !sig) return null;
+
+    const score = parseInt(scoreStr, 10);
+    const accuracy = parseInt(accStr, 10);
+    if (!Number.isFinite(score) || !Number.isFinite(accuracy)) return null;
+
+    const expected = makeSignature(nick, score, accuracy, dateStr);
+    if (sig !== expected) return null;
+
+    return { nick, score, accuracy, date: dateStr, isValid: true };
+  }
+
   // ---------------- RESPONSIVE LAYOUT ----------------
   function applyResponsiveLayout() {
     const vw = Math.max(320, window.innerWidth);
@@ -167,12 +238,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let isDrumEnabled = false;
   let lastProcessedBeat = -1;
 
-  let audioCtx, analyser, dataArray;
-  let masterOsc, subOsc, masterGain;
+  let audioCtx = null, analyser = null, dataArray = null;
+  let masterOsc = null, subOsc = null, masterGain = null;
 
   // buses
-  let melodyBusGain = null; // volume global mélodie
-  let melodyCompressor = null; // ✅ compresseur pour pousser le volume sans saturer
+  let melodyBusGain = null;
+  let melodyCompressor = null;
   let sfxMetroGain = null;
   let sfxDrumGain = null;
   let stadiumGain = null;
@@ -188,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let state = 'idle'; // 'idle'|'countdown'|'playing'|'finished'
   let startTime = 0;
   let countdownStart = 0;
-  let finishStats = null;
+  let finishStats = null; // {score, accuracy, nick?, date?}
 
   let currentVocalNote = 60;
   let displayBallY = noteToY(60);
@@ -201,7 +272,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let floatTexts = [];
   let fireworks = [];
 
-  // 🏅 medals
+  // zone cliquable du bouton RETRY sur le canvas
+  let retryCanvasButton = null;
+
+  // 🏅 Médailles
   const medals = [];
   function initMedals() {
     medals.length = 0;
@@ -313,11 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!audioCtx) return;
     const t = audioCtx.currentTime;
 
-    // ✅ VOLUME MELODIE (global) — plus haut
-    // Ici on peut monter au-dessus de 1.0 (gain node accepte)
-    // Le compresseur derrière empêche le clipping.
     if (melodyBusGain) melodyBusGain.gain.setTargetAtTime(1.15 * volumes.melody, t, 0.02);
-
     if (stadiumGain) stadiumGain.gain.setTargetAtTime(0.10 * volumes.stadium, t, 0.05);
     if (sfxMetroGain) sfxMetroGain.gain.setTargetAtTime(0.25 * volumes.metronome, t, 0.02);
     if (sfxDrumGain) sfxDrumGain.gain.setTargetAtTime(0.35 * volumes.drums, t, 0.02);
@@ -345,6 +415,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (melody.length > 0) {
         firstNoteT = melody[0].t;
         lastNoteEndT = melody.reduce((m, n) => Math.max(m, n.t + (n.d || 0.5)), melody[0].t);
+
+        // 🔔 on garantit au moins 4 beats complets pour la dernière note
+        const lastNote = melody[melody.length - 1];
+        lastNoteEndT = Math.max(lastNoteEndT, lastNote.t + 4.0);
+
         startBtn.classList.remove('hidden');
         loadingStatus.innerText = "STAGE PRÊT !";
       } else {
@@ -383,13 +458,22 @@ document.addEventListener('DOMContentLoaded', () => {
       const trimmed = line.trim();
       if (trimmed.startsWith('#')) continue;
 
-      if (trimmed.length === 0) { beatCursor += BEATS_PER_LYRIC_LINE; continue; }
+      if (trimmed.length === 0) {
+        beatCursor += BEATS_PER_LYRIC_LINE;
+        continue;
+      }
 
       const mPause1 = trimmed.match(/^~\s*(\d+)\s*$/);
-      if (mPause1) { beatCursor += (parseInt(mPause1[1], 10) || 1) * BEATS_PER_LYRIC_LINE; continue; }
+      if (mPause1) {
+        beatCursor += (parseInt(mPause1[1], 10) || 1) * BEATS_PER_LYRIC_LINE;
+        continue;
+      }
 
       const mPause2 = trimmed.match(/^pause\s*(\d+)?\s*$/i);
-      if (mPause2) { beatCursor += (mPause2[1] ? (parseInt(mPause2[1], 10) || 1) : 1) * BEATS_PER_LYRIC_LINE; continue; }
+      if (mPause2) {
+        beatCursor += (mPause2[1] ? (parseInt(mPause2[1], 10) || 1) : 1) * BEATS_PER_LYRIC_LINE;
+        continue;
+      }
 
       const mAbs = trimmed.match(/^@(\d+)\s+(.*)$/);
       if (mAbs) {
@@ -457,11 +541,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-      // buses
       melodyBusGain = audioCtx.createGain();
       melodyCompressor = audioCtx.createDynamicsCompressor();
 
-      // ✅ réglage compresseur (safe + pousse la mélodie)
       melodyCompressor.threshold.setValueAtTime(-18, audioCtx.currentTime);
       melodyCompressor.knee.setValueAtTime(20, audioCtx.currentTime);
       melodyCompressor.ratio.setValueAtTime(6, audioCtx.currentTime);
@@ -472,7 +554,6 @@ document.addEventListener('DOMContentLoaded', () => {
       sfxDrumGain = audioCtx.createGain();
       stadiumGain = audioCtx.createGain();
 
-      // Routing
       melodyBusGain.connect(melodyCompressor);
       melodyCompressor.connect(audioCtx.destination);
 
@@ -480,7 +561,6 @@ document.addEventListener('DOMContentLoaded', () => {
       sfxDrumGain.connect(audioCtx.destination);
       stadiumGain.connect(audioCtx.destination);
 
-      // mic
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
       });
@@ -491,7 +571,6 @@ document.addEventListener('DOMContentLoaded', () => {
       source.connect(analyser);
       dataArray = new Float32Array(analyser.fftSize);
 
-      // melody oscillators -> masterGain envelope -> melodyBusGain
       masterOsc = audioCtx.createOscillator();
       subOsc = audioCtx.createOscillator();
       masterGain = audioCtx.createGain();
@@ -509,7 +588,9 @@ document.addEventListener('DOMContentLoaded', () => {
       applyVolumes();
     }
 
-    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
     await ensureStadiumLoaded();
   }
 
@@ -560,7 +641,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function stopStadiumLoop() {
-    if (!audioCtx) return;
+    if (!audioCtx || !stadiumGain) return;
     const t = audioCtx.currentTime;
 
     stadiumGain.gain.cancelScheduledValues(t);
@@ -605,6 +686,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let lastHitJingleAt = 0;
   function playHitJingle(midiNote) {
+    if (!audioCtx) return;
     const now = audioCtx.currentTime;
     if (now - lastHitJingleAt < 0.06) return;
     lastHitJingleAt = now;
@@ -931,7 +1013,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ✅ round pixel circle fill
   function drawPixelCircle(cx, cy, r, fill) {
     ctx.fillStyle = fill;
     const rr = r * r;
@@ -949,12 +1030,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const r = Math.round(BALL_DIAM / 2);
     ctx.save();
     ctx.translate(x, y);
-    if (isHitting) { ballRotation += 0.18; ctx.rotate(ballRotation); }
+    if (isHitting) {
+      ballRotation += 0.18;
+      ctx.rotate(ballRotation);
+    }
 
     drawPixelCircle(0, 0, r + BALL_BELT, "rgba(0,0,0,0.85)");
     drawPixelCircle(0, 0, r, "#ffffff");
 
-    const pr = Math.max(4, Math.round(r * BALL_PATCH_SCALE));
+    const pr = Math.max(4, Math.round(BALL_PATCH_SCALE * r));
     drawPixelCircle(0, 0, pr, "#000000");
 
     ctx.fillStyle = "rgba(0,0,0,0.35)";
@@ -964,7 +1048,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.restore();
   }
 
-  // ---------------- END SPLASH ----------------
+  // ---------------- END SPLASH (canvas) ----------------
   function drawEndSplash() {
     if (!finishStats) return;
 
@@ -980,23 +1064,152 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.strokeRect(110, 70, BASE_W - 220, BASE_H - 140);
 
     ctx.textAlign = "center";
+
     ctx.fillStyle = "#ffffff";
-    ctx.font = "44px 'Press Start 2P'";
-    ctx.fillText("BRAVO !", BASE_W / 2, 150);
+    ctx.font = "32px 'Press Start 2P'";
+    ctx.fillText("CERTIFICAT", BASE_W / 2, 120);
+
+    ctx.font = "18px 'Press Start 2P'";
+    ctx.fillText("DE REUSSITE", BASE_W / 2, 150);
+
+    // Médaille centrale
+    ctx.save();
+    ctx.translate(BASE_W / 2, 190);
+    ctx.fillStyle = "#d63031";
+    ctx.fillRect(-14, -42, 8, 24);
+    ctx.fillStyle = "#0984e3";
+    ctx.fillRect(6, -42, 8, 24);
+
+    ctx.fillStyle = "#FDE68A";
+    ctx.beginPath();
+    ctx.arc(0, 0, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#FBBF24";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.font = "16px 'Press Start 2P'";
+    ctx.fillText("★", 0, 6);
+    ctx.restore();
 
     ctx.fillStyle = "#f1c40f";
-    ctx.font = "18px 'Press Start 2P'";
-    ctx.fillText(`SCORE: ${finishStats.score}`, BASE_W / 2, 230);
+    ctx.font = "16px 'Press Start 2P'";
+    ctx.fillText(`SCORE: ${finishStats.score}`, BASE_W / 2, 240);
 
     ctx.fillStyle = "#2ecc71";
     ctx.font = "14px 'Press Start 2P'";
-    ctx.fillText(`PRECISION: ${finishStats.accuracy}%`, BASE_W / 2, 275);
+    ctx.fillText(`PRECISION: ${finishStats.accuracy}%`, BASE_W / 2, 270);
 
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.font = "12px 'Press Start 2P'";
-    ctx.fillText("RETRY POUR REJOUER", BASE_W / 2, 335);
+    if (finishStats.nick) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "12px 'Press Start 2P'";
+      ctx.fillText(`PSEUDO: ${finishStats.nick}`, BASE_W / 2, 300);
+    }
+
+    if (finishStats.date) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "12px 'Press Start 2P'";
+      ctx.fillText(`DATE: ${finishStats.date}`, BASE_W / 2, 330);
+    }
+
+    // Bouton RETRY cliquable sur le canvas
+    const btnW = 220;
+    const btnH = 40;
+    const btnX = BASE_W / 2 - btnW / 2;
+    const btnY = 360;
+
+    retryCanvasButton = { x: btnX, y: btnY, w: btnW, h: btnH };
+
+    ctx.fillStyle = "#2ecc71";
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(btnX, btnY, btnW, btnH);
+
+    ctx.fillStyle = "#000000";
+    ctx.font = "14px 'Press Start 2P'";
+    ctx.fillText("RETRY POUR JOUER", BASE_W / 2, btnY + 26);
 
     ctx.restore();
+  }
+
+  // ---------------- FIN DE PARTIE ----------------
+  function computeTodayDateStr() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function setOverlayModeForm() {
+    endScreen.classList.remove('hidden');
+    endScreen.classList.remove('end-final');
+    if (!endScreen.classList.contains('end-overlay')) {
+      endScreen.classList.add('end-overlay');
+    }
+    if (endPanel) endPanel.style.display = 'block';
+    shareDock.style.display = 'none';
+  }
+
+  function setOverlayModeFinal() {
+    endScreen.classList.remove('hidden');
+    endScreen.classList.remove('end-overlay');
+    endScreen.classList.add('end-final');
+    if (endPanel) endPanel.style.display = 'none';
+    shareDock.style.display = 'block';
+  }
+
+  function showEndOverlayForFreshRun() {
+    if (!finishStats) return;
+    const dateStr = computeTodayDateStr();
+    finishStats.date = dateStr;
+
+    endTitle.innerText = "BRAVO !";
+    endSummary.innerText = `Score: ${finishStats.score} | Précision: ${finishStats.accuracy}% | Date: ${dateStr}`;
+
+    pseudoRow.classList.remove('hidden');
+    saveRow.classList.remove('hidden');
+
+    nicknameInput.value = '';
+    nicknameInput.disabled = false;
+    saveScoreBtn.disabled = false;
+    saveScoreBtn.style.opacity = '1';
+
+    endMessage.innerText = "Entre ton pseudo pour générer ton certificat.";
+    lastShareUrl = null;
+
+    setOverlayModeForm();
+  }
+
+  function showEndOverlayFromShared(shared) {
+    finishStats = {
+      score: shared.score,
+      accuracy: shared.accuracy,
+      nick: shared.nick,
+      date: shared.date
+    };
+
+    endTitle.innerText = "CERTIFICAT DE RÉUSSITE";
+    endSummary.innerText = `Pseudo: ${shared.nick} | Score: ${shared.score} | Précision: ${shared.accuracy}% | Date: ${shared.date}`;
+
+    pseudoRow.classList.add('hidden');
+    saveRow.classList.add('hidden');
+
+    nicknameInput.disabled = true;
+    saveScoreBtn.disabled = true;
+    saveScoreBtn.style.opacity = '0.4';
+
+    endMessage.innerText = "Certificat partagé. Tu peux rejouer avec START ou copier le lien.";
+
+    lastShareUrl = window.location.href;
+
+    setOverlayModeFinal();
   }
 
   function finishGame() {
@@ -1010,9 +1223,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (masterGain && audioCtx) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
     stopStadiumLoop();
+
+    drawEndSplash();
+    showEndOverlayForFreshRun();
   }
 
-  // ---------------- COUNTDOWN OVERLAY ----------------
+  // ---------------- COUNTDOWN OVERLAY (canvas) ----------------
   function drawCountdownOverlay(nowT) {
     const elapsed = nowT - countdownStart;
     const remaining = clamp(COUNTDOWN_SEC - elapsed, 0, COUNTDOWN_SEC);
@@ -1045,7 +1261,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const nowAudio = audioCtx ? audioCtx.currentTime : 0;
     const tSec = (state === 'playing' || state === 'finished') ? Math.max(0, nowAudio - startTime) : 0;
-    const currentBeat = (state === 'playing' || state === 'finished') ? (tSec / BEAT_DURATION) + firstNoteT : firstNoteT;
+    const currentBeat = (state === 'playing' || state === 'finished')
+      ? (tSec / BEAT_DURATION) + firstNoteT
+      : firstNoteT;
+
+    if (beatEl) {
+      const relBeat = currentBeat - firstNoteT;
+      const displayBeat = relBeat > 0 ? relBeat : 0;
+      beatEl.textContent = displayBeat.toFixed(1);
+    }
 
     const scrollX = (state === 'playing' || state === 'finished') ? (currentBeat * 80) : 0;
     drawFootballPitch(scrollX, tSec);
@@ -1054,7 +1278,7 @@ document.addEventListener('DOMContentLoaded', () => {
     medals.forEach(m => drawMedal(m, tSec));
 
     // Rythme
-    if (state === 'playing') {
+    if (state === 'playing' && audioCtx) {
       const beatIdx = Math.floor(currentBeat);
       if (beatIdx > lastProcessedBeat) {
         const t = audioCtx.currentTime;
@@ -1070,7 +1294,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Voix
-    if (state === 'playing') {
+    if (state === 'playing' && analyser && dataArray && audioCtx) {
       analyser.getFloatTimeDomainData(dataArray);
       const freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
       if (freq) {
@@ -1097,7 +1321,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let activeMIDINote = null;
     let isHitting = false;
 
-    if (state === 'playing') {
+    if (state === 'playing' && audioCtx && masterGain && masterOsc && subOsc) {
       melody.forEach((note, i) => {
         const xS = (note.t - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X;
         const xE = (melody[i + 1])
@@ -1119,15 +1343,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isActive) {
           activeMIDINote = note;
 
-          const timeSinceNoteStart = currentBeat - note.t;
-          if (timeSinceNoteStart > 2.0) {
+          const timeSinceNoteStart = currentBeat - note.t; // en beats
+          const isLastNote = (i === melody.length - 1);
+          const sustainBeats = isLastNote ? 4.0 : 2.0;
+
+          if (timeSinceNoteStart > sustainBeats) {
             masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
           } else {
             const f = midiToFreq(note.n);
             masterOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
             subOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
-
-            // ✅ Envelope plus fort
             masterGain.gain.setTargetAtTime(MELODY_ENVELOPE_GAIN, audioCtx.currentTime, 0.08);
           }
 
@@ -1150,7 +1375,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
 
-      if (!activeMIDINote) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+      if (!activeMIDINote) {
+        masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+      }
     } else {
       if (masterGain && audioCtx) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
     }
@@ -1171,7 +1398,7 @@ document.addEventListener('DOMContentLoaded', () => {
     drawFireworks();
     drawFloatTexts(tSec);
 
-    // Ballon sur note (octave accepté)
+    // Ballon
     let targetY = displayBallY;
     if (currentVocalNote) {
       let visualNote = currentVocalNote;
@@ -1182,7 +1409,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     drawBall(TRIGGER_X, displayBallY, isHitting);
 
-    // UI
+    // UI texte
     scoreEl.innerText = score;
     progressEl.innerText = (notesPassed > 0 ? Math.round((notesHit / notesPassed) * 100) : 0) + "%";
 
@@ -1195,9 +1422,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- MAIN LOOP ----------------
   function loop() {
-    if (!audioCtx) return;
+    if (!audioCtx && state !== 'idle') return;
 
-    const nowAudio = audioCtx.currentTime;
+    const nowAudio = audioCtx ? audioCtx.currentTime : 0;
 
     if (state === 'countdown') {
       renderFrame();
@@ -1227,8 +1454,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- RESET ----------------
   function resetRunState() {
-    score = 0; notesPassed = 0; notesHit = 0;
-    trophies = []; sparks = []; rings = []; floatTexts = []; fireworks = [];
+    score = 0;
+    notesPassed = 0;
+    notesHit = 0;
+    trophies = [];
+    sparks = [];
+    rings = [];
+    floatTexts = [];
+    fireworks = [];
     lastProcessedBeat = -1;
 
     medianBuffer.length = 0;
@@ -1237,12 +1470,16 @@ document.addEventListener('DOMContentLoaded', () => {
     ballRotation = 0;
 
     finishStats = null;
+    retryCanvasButton = null;
 
-    melody.forEach(n => { n.validated = false; n.passed = false; });
+    melody.forEach(n => {
+      n.validated = false;
+      n.passed = false;
+    });
   }
 
-  // ---------------- START / REPLAY ----------------
-  startBtn.onclick = async () => {
+  // ---------------- LANCEMENT RUN ----------------
+  async function launchRun() {
     await initAudio();
     applyResponsiveLayout();
     setupLyricsBoxStyle();
@@ -1253,44 +1490,132 @@ document.addEventListener('DOMContentLoaded', () => {
     resetRunState();
     applyVolumes();
 
-    startBtn.classList.add('hidden');
-    gameBtnsDiv.classList.remove('hidden');
-
     if (stadium.isLoaded) startStadiumLoop();
 
     state = 'countdown';
     countdownStart = audioCtx.currentTime;
     playStartCountdownJingle(countdownStart);
 
+    endScreen.classList.add('hidden');
+    endScreen.classList.remove('end-final');
+    if (!endScreen.classList.contains('end-overlay')) {
+      endScreen.classList.add('end-overlay');
+    }
+    endMessage.innerText = "";
+
     loop();
+  }
+
+  // ---------------- START / REPLAY / STOP ----------------
+  startBtn.onclick = async () => {
+    startBtn.classList.add('hidden');
+    gameBtnsDiv.classList.remove('hidden');
+    await launchRun();
   };
 
   replayBtn.onclick = async () => {
-    await initAudio();
-    applyResponsiveLayout();
-    setupLyricsBoxStyle();
-
-    if (!lyricsLoaded) await loadLyricsTxt();
-    if (lyricsLoaded) buildLyricsSchedule();
-
-    resetRunState();
-    applyVolumes();
-
-    if (stadium.isLoaded) startStadiumLoop();
-
-    state = 'countdown';
-    countdownStart = audioCtx.currentTime;
-    playStartCountdownJingle(countdownStart);
-
-    loop();
+    await launchRun();
   };
 
   stopBtn.onclick = () => location.reload();
+
+  // ---------------- CLIC SUR LE CANVAS (bouton RETRY) ----------------
+  canvas.addEventListener('click', (ev) => {
+    if (state !== 'finished' || !retryCanvasButton) return;
+
+    const rect = canvas.getBoundingClientRect();
+    // conversion coords écran -> coords logiques (BASE_W / BASE_H)
+    const x = (ev.clientX - rect.left) * (BASE_W / rect.width);
+    const y = (ev.clientY - rect.top) * (BASE_H / rect.height);
+
+    const btn = retryCanvasButton;
+    if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+      launchRun();
+    }
+  });
+
+  // ---------------- OVERLAY EVENTS ----------------
+  saveScoreBtn.addEventListener('click', () => {
+    if (!finishStats) {
+      endMessage.innerText = "Aucun score à enregistrer.";
+      return;
+    }
+    let nick = nicknameInput.value.trim().toUpperCase();
+    if (!nick) {
+      endMessage.innerText = "Pseudo obligatoire.";
+      return;
+    }
+    nick = nick.replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    if (!nick) {
+      endMessage.innerText = "Utilise uniquement lettres et chiffres.";
+      return;
+    }
+    nicknameInput.value = nick;
+
+    if (!finishStats.date) {
+      finishStats.date = computeTodayDateStr();
+    }
+    finishStats.nick = nick;
+
+    const url = buildShareUrl(nick, finishStats.score, finishStats.accuracy, finishStats.date);
+    lastShareUrl = url;
+
+    endTitle.innerText = "CERTIFICAT DE RÉUSSITE";
+    endSummary.innerText = `Pseudo: ${nick} | Score: ${finishStats.score} | Précision: ${finishStats.accuracy}% | Date: ${finishStats.date}`;
+    endMessage.innerText = "Score enregistré ! Voici ton certificat. Tu peux maintenant copier le lien et le coller où tu veux.";
+
+    nicknameInput.disabled = true;
+    saveScoreBtn.disabled = true;
+    saveScoreBtn.style.opacity = '0.5';
+
+    pseudoRow.classList.add('hidden');
+    saveRow.classList.add('hidden');
+
+    setOverlayModeFinal();
+    renderFrame();
+  });
+
+  copyUrlBtn.addEventListener('click', async () => {
+    if (!finishStats) {
+      endMessage.innerText = "Joue une partie avant de copier le lien.";
+      return;
+    }
+    if (!lastShareUrl) {
+      endMessage.innerText = "Enregistre d'abord ton score avec ton pseudo.";
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(lastShareUrl);
+      endMessage.innerText = "Lien copié dans le presse-papiers !";
+    } catch (e) {
+      console.warn(e);
+      endMessage.innerText = "Impossible de copier, sélectionne manuellement l'URL dans la barre d'adresse.";
+    }
+  });
 
   // ---------------- BOOT ----------------
   (async () => {
     await loadMidi();
     await loadLyricsTxt();
     if (lyricsLoaded) buildLyricsSchedule();
+
+    applyResponsiveLayout();
+    renderFrame();
+
+    const shared = parseSharedFromUrl();
+    if (shared && shared.isValid) {
+      state = 'finished';
+      finishStats = {
+        score: shared.score,
+        accuracy: shared.accuracy,
+        nick: shared.nick,
+        date: shared.date
+      };
+      lastShareUrl = window.location.href;
+
+      renderFrame();
+      showEndOverlayFromShared(shared);
+    }
   })();
 });

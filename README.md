@@ -1,0 +1,1 @@
+http://localhost:8000/?nick=KLHLKJ&score=4650&acc=42&date=2025-12-20&sig=fa952c0845c6f10

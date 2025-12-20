@@ -4,13 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Mario Vocal - Football & Rock Karaoke</title>
+
     <script type="module">
         import MidiPlayer from 'https://cdn.skypack.dev/midi-player-js';
         window.MidiPlayer = MidiPlayer;
     </script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-        
+
         body { 
             background: #a0d8ef; 
             font-family: 'Press Start 2P', cursive; 
@@ -76,6 +78,86 @@
         .btn-on { background: #2ecc71; color: #fff; }
         .hidden { display: none; }
 
+        /* Overlay de fin, mode "formulaire pseudo" */
+        .end-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.58);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+
+        .end-overlay.hidden {
+            display: none !important;
+        }
+
+        /* Mode final : plus de fond sombre, juste les actions de partage en bas */
+        .end-final {
+            position: fixed;
+            inset: 0;
+            background: transparent;
+            z-index: 50;
+            pointer-events: none; /* on laisse passer les clics sauf sur le dock */
+        }
+
+        .end-panel {
+            background: #111;
+            border: 4px solid #f1c40f;
+            border-radius: 10px;
+            padding: 18px 20px;
+            width: min(90vw, 430px);
+            color: #fff;
+            text-align: center;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.7);
+        }
+
+        .end-title {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+
+        #end-summary {
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+
+        .pseudo-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 10px 0 14px 0;
+            align-items: center;
+        }
+
+        .pseudo-row label {
+            font-size: 9px;
+        }
+
+        #nickname-input {
+            padding: 6px 8px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            border-radius: 4px;
+            border: 2px solid #f1c40f;
+            background: #000;
+            color: #f1c40f;
+            width: 140px;
+            text-align: center;
+        }
+
+        #end-message {
+            margin-top: 8px;
+            font-size: 9px;
+            min-height: 12px;
+        }
+
+        #share-actions button {
+            font-size: 8px;
+        }
+
         @media (max-width: 1000px) {
             #game-container, #lyrics-display, .controls { width: 96vw; }
             #game-container { height: 46vw; max-height: 460px; }
@@ -91,6 +173,7 @@
         <div class="ui-overlay">
             <div>PROGRESSION: <span id="progress-val">0%</span></div>
             <div>POINTS: <span id="score-val">0</span></div>
+            <div>BEAT: <span id="beat-val">0.0</span></div>
         </div>
         <canvas id="gameCanvas" width="950" height="460"></canvas>
     </div>
@@ -109,6 +192,35 @@
             <button id="replayBtn" style="background:#2ecc71; color: white;">RETRY</button>
         </div>
     </div>
+
+    <!-- Overlay de fin : pseudo + résumé (overlay), puis vue certificat (end-final) -->
+    <div id="end-screen-ui" class="end-overlay hidden">
+        <div class="end-panel">
+            <div id="end-title" class="end-title">BRAVO !</div>
+            <div id="end-summary">Partie terminée.</div>
+
+            <div id="pseudo-row" class="pseudo-row">
+                <label for="nickname-input">Ton pseudo (max 6 caractères)</label>
+                <input id="nickname-input" maxlength="6" autocomplete="off" />
+            </div>
+
+            <div id="save-row" style="margin-bottom: 10px;">
+                <button id="save-score-btn" style="background:#2ecc71; color:#000; font-size:8px;">
+                    ENREGISTRER LE SCORE
+                </button>
+            </div>
+
+            <!-- Actions de partage (dock en bas en mode final) -->
+            <div id="share-actions" class="hidden">
+                <div style="margin-bottom: 4px;">
+                    <button id="copy-url-btn" style="background:#f1c40f; color:#000;">COPIER LE LIEN</button>
+                </div>
+            </div>
+
+            <div id="end-message"></div>
+        </div>
+    </div>
+
     <script type="module" src="app.js"></script>
 </body>
 </html>
