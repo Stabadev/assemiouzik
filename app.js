@@ -81,6 +81,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const BPM = 120;
   const BEAT_DURATION = 60 / BPM;
 
+  // Précompte : 4 beats alignés sur le tempo
+  const COUNTDOWN_BEATS = 4;
+  const COUNTDOWN_SEC = COUNTDOWN_BEATS * BEAT_DURATION;
+  const COUNTDOWN_BEAT_BEEP = BEAT_DURATION;
+
   const MIN_FREQ = 70;
   const MAX_FREQ = 900;
 
@@ -89,9 +94,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const OCTAVE_TOL = 1.8;
 
   const END_PADDING_BEATS = 2.0;
-
-  const COUNTDOWN_SEC = 3.2;
-  const COUNTDOWN_BEAT_BEEP = 0.42;
 
   const HIT_JINGLE_VOL = 0.06;
   const START_JINGLE_VOL = 0.10;
@@ -119,9 +121,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ---------------- VOLUMES ----------------
   const volumes = {
     melody: 1.00,
-    stadium: 0.16,
-    metronome: 0.55,
-    drums: 0.50
+    stadium: 0.15,
+    metronome: 0.75,
+    drums: 0.75
   };
 
   // ---------------- HELPERS ----------------
@@ -249,8 +251,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let score = 0, notesPassed = 0, notesHit = 0;
 
-  let isMetroEnabled = false;
-  let isDrumEnabled = false;
+  // ON par défaut
+  let isMetroEnabled = true;
+  let isDrumEnabled = true;
   let lastProcessedBeat = -1;
 
   let audioCtx = null, analyser = null, dataArray = null;
@@ -277,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let finishStats = null; // {score, accuracy, nick?, date?, quote?}
 
   let currentVocalNote = null;
-  let displayBallY = noteToY(60);
+  let displayBallY = noteToY(CENTER_NOTE);
   let ballRotation = 0;
   const medianBuffer = [];
 
@@ -318,8 +321,10 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.classList.toggle('btn-off', !on);
     btn.textContent = `${label}: ${on ? 'ON' : 'OFF'}`;
   }
-  updateToggle(btnMetro, 'METRONOME', false);
-  updateToggle(btnDrum, 'BATTERIE', false);
+
+  // synchro avec les flags par défaut
+  updateToggle(btnMetro, 'METRONOME', isMetroEnabled);
+  updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
 
   btnMetro.addEventListener('click', () => {
     isMetroEnabled = !isMetroEnabled;
@@ -549,6 +554,19 @@ document.addEventListener('DOMContentLoaded', () => {
                  : `<div style="color:rgba(255,255,255,0.65); text-shadow:2px 2px #000;">...</div>`}
        ${nextText ? `<div style="color:rgba(255,255,255,${nextAlpha.toFixed(3)}); text-shadow:2px 2px #000, 0 0 10px rgba(255,255,255,${nextGlow.toFixed(3)});">${escapeHtml(nextText)}</div>`
                   : `<div style="color:rgba(255,255,255,0.14); text-shadow:2px 2px #000;"> </div>`}`;
+  }
+
+  // 🔹 Lyrics pendant le COUNTDOWN : première ligne en grisé
+  function renderLyricsCountdown() {
+    if (!lyricsLoaded || !lyricsItems || lyricsItems.length === 0) return;
+    const first = lyricsItems[0]?.text || "";
+
+    lyricDiv.innerHTML =
+      `<div style="color:rgba(255,255,255,0.14); text-shadow:2px 2px #000;"> </div>
+       <div style="color:rgba(255,255,255,0.55); text-shadow:2px 2px #000; font-weight:700;">
+         ${escapeHtml(first)}
+       </div>
+       <div style="color:rgba(255,255,255,0.14); text-shadow:2px 2px #000;"> </div>`;
   }
 
   // ---------------- AUDIO INIT ----------------
@@ -1259,11 +1277,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const elapsed = nowT - countdownStart;
     const remaining = clamp(COUNTDOWN_SEC - elapsed, 0, COUNTDOWN_SEC);
 
+    const beatsElapsed = (COUNTDOWN_SEC - remaining) / BEAT_DURATION;
+
     let label = "";
-    if (remaining > 2.4) label = "3";
-    else if (remaining > 1.55) label = "2";
-    else if (remaining > 0.75) label = "1";
-    else label = "GO!";
+    if (beatsElapsed < 1) label = "1";
+    else if (beatsElapsed < 2) label = "2";
+    else if (beatsElapsed < 3) label = "3";
+    else label = "CHANTEZ";
 
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.35)";
@@ -1276,7 +1296,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = "12px 'Press Start 2P'";
-    ctx.fillText("PREPARE TA VOIX !", BASE_W / 2, BASE_H / 2 + 70);
+    ctx.fillText("SUR LE PROCHAIN TEMPS !", BASE_W / 2, BASE_H / 2 + 70);
 
     ctx.restore();
   }
@@ -1286,10 +1306,20 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.clearRect(0, 0, BASE_W, BASE_H);
 
     const nowAudio = audioCtx ? audioCtx.currentTime : 0;
-    const tSec = (state === 'playing' || state === 'finished') ? Math.max(0, nowAudio - startTime) : 0;
-    const currentBeat = (state === 'playing' || state === 'finished')
-      ? (tSec / BEAT_DURATION) + firstNoteT
-      : firstNoteT;
+
+    let tSec = 0;
+    let currentBeat = firstNoteT;
+
+    if (state === 'playing' || state === 'finished') {
+      // temps "normal" pendant et après la partie
+      tSec = Math.max(0, nowAudio - startTime);
+      currentBeat = (tSec / BEAT_DURATION) + firstNoteT;
+    } else if (state === 'countdown') {
+      // 4 avant-beats avant la première note
+      const tCountdown = Math.max(0, nowAudio - countdownStart);
+      const preBeats = clamp(tCountdown / BEAT_DURATION, 0, COUNTDOWN_BEATS);
+      currentBeat = firstNoteT - (COUNTDOWN_BEATS - preBeats);
+    }
 
     if (beatEl) {
       const relBeat = currentBeat - firstNoteT;
@@ -1297,7 +1327,7 @@ document.addEventListener('DOMContentLoaded', () => {
       beatEl.textContent = displayBeat.toFixed(1);
     }
 
-    const scrollX = (state === 'playing' || state === 'finished') ? (currentBeat * 80) : 0;
+    const scrollX = (state === 'idle') ? 0 : (currentBeat * 80);
     drawFootballPitch(scrollX, tSec);
 
     updateMedals();
@@ -1328,8 +1358,8 @@ document.addEventListener('DOMContentLoaded', () => {
         medianBuffer.push(n);
         if (medianBuffer.length > 5) medianBuffer.shift();
         currentVocalNote = [...medianBuffer].sort((a, b) => a - b)[2];
-        }  else {
-        // 👇 IMPORTANT : silence ou pitch non fiable → pas de note
+      } else {
+        // silence ou pitch non fiable → pas de note
         medianBuffer.length = 0;
         currentVocalNote = null;
       }
@@ -1443,9 +1473,16 @@ document.addEventListener('DOMContentLoaded', () => {
     scoreEl.innerText = score;
     progressEl.innerText = (notesPassed > 0 ? Math.round((notesHit / notesPassed) * 100) : 0) + "%";
 
-    if (state === 'playing') renderLyrics3Lines(currentBeat);
-    if (state === 'countdown') drawCountdownOverlay(nowAudio);
-    if (state === 'finished') drawEndSplash();
+    if (state === 'playing') {
+      renderLyrics3Lines(currentBeat);
+    }
+    if (state === 'countdown') {
+      renderLyricsCountdown();
+      drawCountdownOverlay(nowAudio);
+    }
+    if (state === 'finished') {
+      drawEndSplash();
+    }
 
     return { currentBeat };
   }
@@ -1496,8 +1533,8 @@ document.addEventListener('DOMContentLoaded', () => {
     lastProcessedBeat = -1;
 
     medianBuffer.length = 0;
-    currentVocalNote = 60;
-    displayBallY = noteToY(60);
+    currentVocalNote = null;
+    displayBallY = noteToY(CENTER_NOTE);
     ballRotation = 0;
 
     finishStats = null;
