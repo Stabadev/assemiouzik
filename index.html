@@ -5,16 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Mario Vocal - Football & Rock Karaoke</title>
     
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-0C5D6KPW5C"></script>
-    <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-
-    gtag('config', 'G-0C5D6KPW5C');
-    </script>
-
     <script type="module">
         import MidiPlayer from 'https://cdn.skypack.dev/midi-player-js';
         window.MidiPlayer = MidiPlayer;
@@ -178,11 +168,21 @@
             #game-container { height: 46vw; max-height: 460px; }
         }
     </style>
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-0C5D6KPW5C"></script>
+    <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-0C5D6KPW5C');
+    </script>
+    
 </head>
 <body>
 
     <div class="header">
-        <h2 style="font-size: 14px; margin: 0;">STAGE 1-1: ROCK VOCAL TRAINING</h2>
+        <h2 style="font-size: 14px; margin: 0;">STAGE 1-1: FOOT VOCAL TRAINING</h2>
     </div>
 
     <div id="game-container">
@@ -194,7 +194,7 @@
         <canvas id="gameCanvas" width="950" height="460"></canvas>
     </div>
 
-    <div id="lyrics-display">PRÊT POUR LA SESSION ?</div>
+    <div id="lyrics-display">PRÊT POUR CHANTER ?</div>
 
     <div class="controls">
         <div id="loading-status" style="font-size:9px; margin-bottom:10px;">CHARGEMENT DU STAGE...</div>
