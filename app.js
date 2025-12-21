@@ -1,5 +1,8 @@
 /**
- * app.js — version avec :
+ * app.js fusionné — modes PRO / FUN
+ * - Sélecteur de mode avant la partie (au-dessus des volumes)
+ * - Mode PRO : suivi plus précis (comme ta version pro)
+ * - Mode FUN : plus permissif, commence avec une note et garde la dernière note
  * - pseudo en fin de partie + URL signée
  * - affichage du beat
  * - dernière note sustain au moins 4 beats
@@ -89,9 +92,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const MIN_FREQ = 70;
   const MAX_FREQ = 900;
 
-  const HIT_TOL = 1.5;
+  // TOLÉRANCES PRO / FUN
+  const PRO_HIT_TOL = 1.5;
+  const PRO_OCTAVE_TOL = 1.8;
+  const FUN_HIT_TOL = 3.0;
+  const FUN_OCTAVE_TOL = 3.0;
+
   const OCTAVE_SEMI = 12;
-  const OCTAVE_TOL = 1.8;
 
   const END_PADDING_BEATS = 2.0;
 
@@ -118,6 +125,33 @@ document.addEventListener('DOMContentLoaded', () => {
     return END_QUOTES[i];
   }
 
+  // ---------------- MODE DE JEU ----------------
+  // 'pro' = plus précis, 'fun' = plus permissif et garde la dernière note
+  let currentMode = 'pro';
+
+  function isFunMode() { return currentMode === 'fun'; }
+  function isProMode() { return currentMode === 'pro'; }
+
+  function setMode(newMode) {
+    if (newMode !== 'pro' && newMode !== 'fun') return;
+    if (currentMode === newMode) return;
+    currentMode = newMode;
+
+    // Option : ajuster quelques réglages par défaut selon le mode
+    // (on ne touche pas au run en cours)
+    if (state === 'idle' || state === 'finished') {
+      if (isProMode()) {
+        isMetroEnabled = true;
+        isDrumEnabled = true;
+      } else {
+        isMetroEnabled = false;
+        isDrumEnabled = false;
+      }
+      updateToggle(btnMetro, 'METRONOME', isMetroEnabled);
+      updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
+    }
+  }
+
   // ---------------- VOLUMES ----------------
   const volumes = {
     melody: 1.00,
@@ -136,10 +170,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function isPitchAccepted(vocalNote, targetNote) {
     if (!vocalNote) return false;
+    const hitTol = isFunMode() ? FUN_HIT_TOL : PRO_HIT_TOL;
+    const octaveTol = isFunMode() ? FUN_OCTAVE_TOL : PRO_OCTAVE_TOL;
+
     const diff = vocalNote - targetNote;
-    if (Math.abs(diff) <= HIT_TOL) return true;
-    if (Math.abs(diff - OCTAVE_SEMI) <= OCTAVE_TOL) return true;
-    if (Math.abs(diff + OCTAVE_SEMI) <= OCTAVE_TOL) return true;
+    if (Math.abs(diff) <= hitTol) return true;
+    if (Math.abs(diff - OCTAVE_SEMI) <= octaveTol) return true;
+    if (Math.abs(diff + OCTAVE_SEMI) <= octaveTol) return true;
     return false;
   }
 
@@ -202,7 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(window.location.search);
     const nick = params.get('nick');
     const scoreStr = params.get('score');
-    const accStr = params.get('acc');
+       const accStr = params.get('acc');
     const dateStr = params.get('date');
     const sig = params.get('sig');
 
@@ -244,6 +281,13 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', () => applyResponsiveLayout(), { passive: true });
   applyResponsiveLayout();
 
+    // Redraw du canvas à chaque scroll pour éviter les “effacements”
+  window.addEventListener('scroll', () => {
+    // on se contente de redessiner avec l’état courant
+    renderFrame();
+  }, { passive: true });
+
+
   // ---------------- STATE ----------------
   let melody = [];
   let firstNoteT = 0;
@@ -251,7 +295,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let score = 0, notesPassed = 0, notesHit = 0;
 
-  // ON par défaut
+  // ON par défaut pour PRO, mais on adaptera avec le mode
   let isMetroEnabled = true;
   let isDrumEnabled = true;
   let lastProcessedBeat = -1;
@@ -322,7 +366,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.textContent = `${label}: ${on ? 'ON' : 'OFF'}`;
   }
 
-  // synchro avec les flags par défaut
+  // synchro avec les flags par défaut (PRO par défaut)
   updateToggle(btnMetro, 'METRONOME', isMetroEnabled);
   updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
 
@@ -334,6 +378,62 @@ document.addEventListener('DOMContentLoaded', () => {
     isDrumEnabled = !isDrumEnabled;
     updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
   });
+
+  // ---------------- MODE UI (au-dessus des volumes) ----------------
+  function injectModeUI() {
+    if (!controlsRoot) return;
+    if (document.getElementById('mode-panel')) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'mode-panel';
+    panel.style.marginTop = '8px';
+    panel.style.marginBottom = '4px';
+    panel.style.paddingBottom = '6px';
+    panel.style.borderBottom = '1px solid rgba(0,0,0,0.15)';
+
+    const title = document.createElement('div');
+    title.textContent = "MODE DE JEU";
+    title.style.fontSize = '9px';
+    title.style.marginBottom = '4px';
+    title.style.textAlign = 'center';
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justifyContent = 'center';
+    row.style.alignItems = 'center';
+    row.style.gap = '12px';
+    row.style.fontSize = '10px';
+
+    const proLabel = document.createElement('label');
+    const proInput = document.createElement('input');
+    proInput.type = 'radio';
+    proInput.name = 'game-mode';
+    proInput.value = 'pro';
+    proInput.checked = true;
+    proLabel.appendChild(proInput);
+    proLabel.appendChild(document.createTextNode(' 🎯 Pro'));
+
+    const funLabel = document.createElement('label');
+    const funInput = document.createElement('input');
+    funInput.type = 'radio';
+    funInput.name = 'game-mode';
+    funInput.value = 'fun';
+    funLabel.appendChild(funInput);
+    funLabel.appendChild(document.createTextNode(' 🎉 Fun'));
+
+    row.appendChild(proLabel);
+    row.appendChild(funLabel);
+    panel.appendChild(title);
+    panel.appendChild(row);
+    controlsRoot.appendChild(panel);
+
+    proInput.addEventListener('change', () => {
+      if (proInput.checked) setMode('pro');
+    });
+    funInput.addEventListener('change', () => {
+      if (funInput.checked) setMode('fun');
+    });
+  }
 
   // ---------------- VOLUME UI ----------------
   function makeSliderRow(label, key) {
@@ -401,6 +501,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     controlsRoot.appendChild(panel);
   }
+
+  injectModeUI();
   injectVolumeUI();
 
   function applyVolumes() {
@@ -1359,9 +1461,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (medianBuffer.length > 5) medianBuffer.shift();
         currentVocalNote = [...medianBuffer].sort((a, b) => a - b)[2];
       } else {
-        // silence ou pitch non fiable → pas de note
+        // PRO : silence -> reset / FUN : on garde la dernière note (et on en crée une si null)
         medianBuffer.length = 0;
-        currentVocalNote = null;
+        if (isProMode()) {
+          currentVocalNote = null;
+        } else {
+          // FUN : si aucune note encore, on part du centre
+          if (currentVocalNote == null) {
+            currentVocalNote = CENTER_NOTE;
+          }
+        }
       }
     }
 
@@ -1460,7 +1569,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Ballon
     let targetY = displayBallY;
-    if (currentVocalNote) {
+    if (currentVocalNote != null) {
       let visualNote = currentVocalNote;
       if (activeMIDINote) visualNote = foldToNearestSamePitchClass(currentVocalNote, activeMIDINote.n);
       targetY = noteToY(visualNote);
@@ -1486,6 +1595,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     return { currentBeat };
   }
+
+    // ---------------- REDRAW SUR SCROLL (canvas + éventuel certificat) ----------------
+  window.addEventListener('scroll', () => {
+    // On redessine simplement l'état courant : jeu, countdown ou certificat.
+    requestAnimationFrame(() => {
+      renderFrame();
+    });
+  }, { passive: true });
+
+
 
   // ---------------- MAIN LOOP ----------------
   function loop() {
@@ -1533,8 +1652,13 @@ document.addEventListener('DOMContentLoaded', () => {
     lastProcessedBeat = -1;
 
     medianBuffer.length = 0;
-    currentVocalNote = null;
-    displayBallY = noteToY(CENTER_NOTE);
+    if (isFunMode()) {
+      // FUN : commence par une note
+      currentVocalNote = CENTER_NOTE;
+    } else {
+      currentVocalNote = null;
+    }
+    displayBallY = noteToY(currentVocalNote ?? CENTER_NOTE);
     ballRotation = 0;
 
     finishStats = null;
