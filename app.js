@@ -276,7 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let countdownStart = 0;
   let finishStats = null; // {score, accuracy, nick?, date?, quote?}
 
-  let currentVocalNote = 60;
+  let currentVocalNote = null;
   let displayBallY = noteToY(60);
   let ballRotation = 0;
   const medianBuffer = [];
@@ -1328,6 +1328,10 @@ document.addEventListener('DOMContentLoaded', () => {
         medianBuffer.push(n);
         if (medianBuffer.length > 5) medianBuffer.shift();
         currentVocalNote = [...medianBuffer].sort((a, b) => a - b)[2];
+        }  else {
+        // 👇 IMPORTANT : silence ou pitch non fiable → pas de note
+        medianBuffer.length = 0;
+        currentVocalNote = null;
       }
     }
 
