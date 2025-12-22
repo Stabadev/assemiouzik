@@ -144,8 +144,8 @@ document.addEventListener('DOMContentLoaded', () => {
         isMetroEnabled = true;
         isDrumEnabled = true;
       } else {
-        isMetroEnabled = false;
-        isDrumEnabled = false;
+        isMetroEnabled = true;
+        isDrumEnabled = true;
       }
       updateToggle(btnMetro, 'METRONOME', isMetroEnabled);
       updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
