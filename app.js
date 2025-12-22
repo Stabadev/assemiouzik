@@ -25,6 +25,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const uiOverlay = document.querySelector('.ui-overlay');
 
+  // Ecran d'accueil
+  const welcomeScreen = document.getElementById('welcome-screen');
+  const mainUi = document.getElementById('main-ui');
+  const welcomeGoBtn = document.getElementById('welcome-go-btn');
+
   // UI jeux
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
@@ -239,7 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(window.location.search);
     const nick = params.get('nick');
     const scoreStr = params.get('score');
-       const accStr = params.get('acc');
+    const accStr = params.get('acc');
     const dateStr = params.get('date');
     const sig = params.get('sig');
 
@@ -280,13 +285,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.addEventListener('resize', () => applyResponsiveLayout(), { passive: true });
   applyResponsiveLayout();
-
-    // Redraw du canvas à chaque scroll pour éviter les “effacements”
-  window.addEventListener('scroll', () => {
-    // on se contente de redessiner avec l’état courant
-    renderFrame();
-  }, { passive: true });
-
 
   // ---------------- STATE ----------------
   let melody = [];
@@ -1596,15 +1594,12 @@ document.addEventListener('DOMContentLoaded', () => {
     return { currentBeat };
   }
 
-    // ---------------- REDRAW SUR SCROLL (canvas + éventuel certificat) ----------------
+  // ---------------- REDRAW SUR SCROLL (canvas + éventuel certificat) ----------------
   window.addEventListener('scroll', () => {
-    // On redessine simplement l'état courant : jeu, countdown ou certificat.
     requestAnimationFrame(() => {
       renderFrame();
     });
   }, { passive: true });
-
-
 
   // ---------------- MAIN LOOP ----------------
   function loop() {
@@ -1789,6 +1784,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // ---------------- GO ECRAN D’ACCUEIL ----------------
+  if (welcomeGoBtn && welcomeScreen && mainUi) {
+    welcomeGoBtn.addEventListener('click', () => {
+      welcomeScreen.classList.add('hidden');
+      mainUi.classList.remove('hidden');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
   // ---------------- BOOT ----------------
   (async () => {
     await loadMidi();
@@ -1800,6 +1804,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const shared = parseSharedFromUrl();
     if (shared && shared.isValid) {
+      // Si on arrive via un lien partagé, on saute l'écran d'accueil
+      if (welcomeScreen && mainUi) {
+        welcomeScreen.classList.add('hidden');
+        mainUi.classList.remove('hidden');
+      }
+
       state = 'finished';
       finishStats = {
         score: shared.score,
