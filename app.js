@@ -1,8 +1,9 @@
 /**
- * app.js fusionné — modes PRO / FUN
+ * app.js fusionné — modes PRO / FUN + TONALITÉ
  * - Sélecteur de mode avant la partie (au-dessus des volumes)
- * - Mode PRO : suivi plus précis (comme ta version pro)
- * - Mode FUN : plus permissif, commence avec une note et garde la dernière note
+ * - Sélecteur de tonalité: BASSE (-3 tons), NORMALE, HAUTE (+3 tons)
+ * - Mode PRO : suivi plus précis (CREPE / ml5.js)
+ * - Mode FUN : plus permissif (NSDF maison, comme avant)
  * - pseudo en fin de partie + URL signée
  * - affichage du beat
  * - dernière note sustain au moins 4 beats
@@ -75,6 +76,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const MIDI_FILE_PATH = 'musique.mid';
   const STADIUM_FILE_PATH = 'stadium.mp3';
   const LYRICS_FILE_PATH = 'lyrics.txt';
+
+  // ⚡ nouveau : chemin du modèle CREPE pour ml5
+  const CREPE_MODEL_URL = './model/';
 
   const BEATS_PER_LYRIC_LINE = 8;
 
@@ -157,6 +161,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // ---------------- TONALITÉ ----------------
+  // -3 tons = -6 demi-tons, +3 tons = +6 demi-tons
+  const TONE_LOW = -6;
+  const TONE_NORMAL = 0;
+  const TONE_HIGH = 6;
+
+  let transposeSemis = TONE_NORMAL; // 0 par défaut
+
+  function setTone(newSemis) {
+    if (typeof newSemis !== 'number') return;
+    transposeSemis = newSemis;
+    // Pas besoin de recalculer la mélodie : on applique le décalage
+    // à l'affichage et à la détection à chaque frame.
+  }
+
   // ---------------- VOLUMES ----------------
   const volumes = {
     melody: 1.00,
@@ -174,7 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function isSamePitchClass(a, b) { return mod12(Math.round(a)) === mod12(Math.round(b)); }
 
   function isPitchAccepted(vocalNote, targetNote) {
-    if (!vocalNote) return false;
+    if (!vocalNote && vocalNote !== 0) return false;
     const hitTol = isFunMode() ? FUN_HIT_TOL : PRO_HIT_TOL;
     const octaveTol = isFunMode() ? FUN_OCTAVE_TOL : PRO_OCTAVE_TOL;
 
@@ -186,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function foldToNearestSamePitchClass(vocalNote, targetNote) {
-    if (!vocalNote) return null;
+    if (!vocalNote && vocalNote !== 0) return null;
     const targetPc = mod12(Math.round(targetNote));
     const base = vocalNote;
 
@@ -298,8 +317,18 @@ document.addEventListener('DOMContentLoaded', () => {
   let isDrumEnabled = true;
   let lastProcessedBeat = -1;
 
+  // 🎧 AUDIO + CREPE
   let audioCtx = null, analyser = null, dataArray = null;
   let masterOsc = null, subOsc = null, masterGain = null;
+
+  // MediaStream brut pour CREPE
+  let micStream = null;
+
+  // CREPE / ml5
+  let crepePitch = null;
+  let crepeModelReady = false;
+  let crepeListening = false;
+  let crepeCurrentFreq = null;
 
   // buses
   let melodyBusGain = null;
@@ -433,6 +462,62 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ---------------- TONE UI ----------------
+  function injectToneUI() {
+    if (!controlsRoot) return;
+    if (document.getElementById('tone-panel')) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'tone-panel';
+    panel.style.marginTop = '6px';
+    panel.style.marginBottom = '6px';
+    panel.style.paddingBottom = '6px';
+    panel.style.borderBottom = '1px dashed rgba(0,0,0,0.25)';
+
+    const title = document.createElement('div');
+    title.textContent = "TONALITÉ DE LA MÉLODIE";
+    title.style.fontSize = '9px';
+    title.style.marginBottom = '4px';
+    title.style.textAlign = 'center';
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justifyContent = 'center';
+    row.style.alignItems = 'center';
+    row.style.gap = '10px';
+    row.style.fontSize = '9px';
+    row.style.flexWrap = 'wrap';
+
+    function makeRadio(label, value, checked) {
+      const lab = document.createElement('label');
+      const inp = document.createElement('input');
+      inp.type = 'radio';
+      inp.name = 'tone-mode';
+      inp.value = String(value);
+      inp.checked = checked;
+      lab.appendChild(inp);
+      lab.appendChild(document.createTextNode(' ' + label));
+      inp.addEventListener('change', () => {
+        if (inp.checked) {
+          setTone(value);
+        }
+      });
+      return lab;
+    }
+
+    const lowLabel = makeRadio('BASSE (-3 tons)', TONE_LOW, false);
+    const normLabel = makeRadio('NORMALE', TONE_NORMAL, true);
+    const highLabel = makeRadio('HAUTE (+3 tons)', TONE_HIGH, false);
+
+    row.appendChild(lowLabel);
+    row.appendChild(normLabel);
+    row.appendChild(highLabel);
+
+    panel.appendChild(title);
+    panel.appendChild(row);
+    controlsRoot.appendChild(panel);
+  }
+
   // ---------------- VOLUME UI ----------------
   function makeSliderRow(label, key) {
     const wrap = document.createElement('div');
@@ -501,6 +586,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   injectModeUI();
+  injectToneUI();
   injectVolumeUI();
 
   function applyVolumes() {
@@ -698,6 +784,8 @@ document.addEventListener('DOMContentLoaded', () => {
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
       });
 
+      micStream = stream; // 🎧 on garde le MediaStream brut pour CREPE
+
       const source = audioCtx.createMediaStreamSource(stream);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
@@ -719,12 +807,74 @@ document.addEventListener('DOMContentLoaded', () => {
       subOsc.start();
 
       applyVolumes();
+
+      // On essaie d'initialiser CREPE dès qu'on a un audioCtx + micStream
+      initCrepePitch();
     }
 
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume();
     }
     await ensureStadiumLoaded();
+  }
+
+  // ---------------- CREPE / ml5.js ----------------
+  function initCrepePitch() {
+    if (crepePitch || !audioCtx || !micStream) return;
+
+    if (typeof ml5 === 'undefined' || !ml5.pitchDetection) {
+      console.warn('ml5.pitchDetection non disponible — utilisation NSDF uniquement (mode FUN/fallback).');
+      return;
+    }
+
+    try {
+      crepePitch = ml5.pitchDetection(
+        CREPE_MODEL_URL,
+        audioCtx,
+        micStream,
+        () => {
+          crepeModelReady = true;
+          console.log('Modèle CREPE prêt ✅');
+        }
+      );
+    } catch (e) {
+      console.warn('Erreur d’initialisation CREPE — fallback NSDF.', e);
+      crepePitch = null;
+      crepeModelReady = false;
+    }
+  }
+
+  function ensureCrepeListening() {
+    if (!crepePitch || !crepeModelReady || crepeListening || state !== 'playing') return;
+    crepeListening = true;
+
+    const loopPitch = () => {
+      if (!crepePitch || !crepeModelReady || state !== 'playing') {
+        crepeListening = false;
+        return;
+      }
+
+      crepePitch.getPitch((err, frequency) => {
+        if (err) {
+          console.warn('CREPE pitch error:', err);
+          crepeCurrentFreq = null;
+        } else {
+          if (frequency && Number.isFinite(frequency) && frequency > 0) {
+            crepeCurrentFreq = frequency;
+          } else {
+            crepeCurrentFreq = null;
+          }
+        }
+
+        if (state === 'playing') {
+          requestAnimationFrame(loopPitch);
+        } else {
+          crepeListening = false;
+        }
+      });
+    };
+
+    loopPitch();
   }
 
   // ---------------- STADIUM MP3 ----------------
@@ -868,7 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
     o.start(t); o.stop(t + 0.05);
   }
 
-  // ---------------- PITCH DETECTOR ----------------
+  // ---------------- PITCH DETECTOR (NSDF maison, utilisé en mode FUN + fallback) ----------------
   function detectFreqNSDF_bounded(buf, sampleRate) {
     let sumSq = 0;
     for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
@@ -1411,11 +1561,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentBeat = firstNoteT;
 
     if (state === 'playing' || state === 'finished') {
-      // temps "normal" pendant et après la partie
       tSec = Math.max(0, nowAudio - startTime);
       currentBeat = (tSec / BEAT_DURATION) + firstNoteT;
     } else if (state === 'countdown') {
-      // 4 avant-beats avant la première note
       const tCountdown = Math.max(0, nowAudio - countdownStart);
       const preBeats = clamp(tCountdown / BEAT_DURATION, 0, COUNTDOWN_BEATS);
       currentBeat = firstNoteT - (COUNTDOWN_BEATS - preBeats);
@@ -1449,26 +1597,40 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Voix
+    // Voix : PRO => CREPE si dispo, FUN => NSDF comme avant
     if (state === 'playing' && analyser && dataArray && audioCtx) {
       analyser.getFloatTimeDomainData(dataArray);
-      const freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
+
+      let freq = null;
+
+      if (isProMode() && crepeModelReady && crepeCurrentFreq) {
+        // 🎯 Mode PRO : CREPE
+        freq = crepeCurrentFreq;
+      } else {
+        // 🎉 Mode FUN (ou fallback) : NSDF maison
+        freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
+      }
+
       if (freq) {
         const n = 12 * Math.log2(freq / 440) + 69;
         medianBuffer.push(n);
         if (medianBuffer.length > 5) medianBuffer.shift();
         currentVocalNote = [...medianBuffer].sort((a, b) => a - b)[2];
       } else {
-        // PRO : silence -> reset / FUN : on garde la dernière note (et on en crée une si null)
+        // PRO : silence => reset ; FUN : on garde dernière note (ou on crée une note de base)
         medianBuffer.length = 0;
         if (isProMode()) {
           currentVocalNote = null;
         } else {
-          // FUN : si aucune note encore, on part du centre
           if (currentVocalNote == null) {
             currentVocalNote = CENTER_NOTE;
           }
         }
+      }
+
+      // s'assure que la boucle CREPE tourne en PRO
+      if (isProMode()) {
+        ensureCrepeListening();
       }
     }
 
@@ -1486,16 +1648,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Mélodie + scoring
     let activeMIDINote = null;
+    let activeNotePitch = null;
     let isHitting = false;
 
     if (state === 'playing' && audioCtx && masterGain && masterOsc && subOsc) {
       melody.forEach((note, i) => {
+        // NOTE EFFECTIVE = MIDI + transposition
+        const notePitch = note.n + transposeSemis;
+
         const xS = (note.t - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X;
         const xE = (melody[i + 1])
           ? (melody[i + 1].t - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X
           : (note.t + note.d - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X;
 
-        const y = noteToY(note.n);
+        const y = noteToY(notePitch);
 
         if (xE > PIANO_WIDTH && xS < BASE_W) {
           ctx.fillStyle = note.validated ? "rgba(46,204,113,0.85)" : "rgba(231,76,60,0.85)";
@@ -1509,6 +1675,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (isActive) {
           activeMIDINote = note;
+          activeNotePitch = notePitch;
 
           const timeSinceNoteStart = currentBeat - note.t; // beats
           const isLastNote = (i === melody.length - 1);
@@ -1517,20 +1684,20 @@ document.addEventListener('DOMContentLoaded', () => {
           if (timeSinceNoteStart > sustainBeats) {
             masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
           } else {
-            const f = midiToFreq(note.n);
+            const f = midiToFreq(notePitch);
             masterOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
             subOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
             masterGain.gain.setTargetAtTime(MELODY_ENVELOPE_GAIN, audioCtx.currentTime, 0.08);
           }
 
-          if (isPitchAccepted(currentVocalNote, note.n)) {
+          if (isPitchAccepted(currentVocalNote, notePitch)) {
             isHitting = true;
             if (!note.validated) {
               note.validated = true;
               score += 50;
               notesHit++;
               spawnTrophy(TRIGGER_X, y);
-              playHitJingle(note.n);
+              playHitJingle(notePitch);
               maybeRollBonus(TRIGGER_X, y);
             }
           }
@@ -1569,7 +1736,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let targetY = displayBallY;
     if (currentVocalNote != null) {
       let visualNote = currentVocalNote;
-      if (activeMIDINote) visualNote = foldToNearestSamePitchClass(currentVocalNote, activeMIDINote.n);
+      if (activeNotePitch != null) {
+        visualNote = foldToNearestSamePitchClass(currentVocalNote, activeNotePitch);
+      }
       targetY = noteToY(visualNote);
     }
     displayBallY += (targetY - displayBallY) * 0.15;
@@ -1648,7 +1817,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     medianBuffer.length = 0;
     if (isFunMode()) {
-      // FUN : commence par une note
       currentVocalNote = CENTER_NOTE;
     } else {
       currentVocalNote = null;
@@ -1658,6 +1826,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     finishStats = null;
     retryCanvasButton = null;
+
+    crepeCurrentFreq = null;
+    crepeListening = false;
 
     melody.forEach(n => {
       n.validated = false;
