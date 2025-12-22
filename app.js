@@ -146,8 +146,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (currentMode === newMode) return;
     currentMode = newMode;
 
-    // Option : ajuster quelques réglages par défaut selon le mode
-    // (on ne touche pas au run en cours)
     if (state === 'idle' || state === 'finished') {
       if (isProMode()) {
         isMetroEnabled = true;
@@ -172,8 +170,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function setTone(newSemis) {
     if (typeof newSemis !== 'number') return;
     transposeSemis = newSemis;
-    // Pas besoin de recalculer la mélodie : on applique le décalage
-    // à l'affichage et à la détection à chaque frame.
   }
 
   // ---------------- VOLUMES ----------------
@@ -192,10 +188,27 @@ document.addEventListener('DOMContentLoaded', () => {
   function noteToY(note) { return 250 - (note - CENTER_NOTE) * NOTE_HEIGHT_UNIT; }
   function isSamePitchClass(a, b) { return mod12(Math.round(a)) === mod12(Math.round(b)); }
 
-  function isPitchAccepted(vocalNote, targetNote) {
-    if (!vocalNote && vocalNote !== 0) return false;
-    const hitTol = isFunMode() ? FUN_HIT_TOL : PRO_HIT_TOL;
-    const octaveTol = isFunMode() ? FUN_OCTAVE_TOL : PRO_OCTAVE_TOL;
+  // 🔁 TOLÉRANCE ADAPTATIVE : notes courtes plus faciles à valider
+  function isPitchAccepted(vocalNote, targetNote, noteDurationBeats = 1) {
+    if (!Number.isFinite(vocalNote)) return false;
+
+    const dur = noteDurationBeats || 1;
+    const baseHit = isFunMode() ? FUN_HIT_TOL : PRO_HIT_TOL;
+    const baseOct = isFunMode() ? FUN_OCTAVE_TOL : PRO_OCTAVE_TOL;
+
+    let hitTol = baseHit;
+    let octaveTol = baseOct;
+
+    // notes <= 0.75 beat : on élargit un peu
+    if (dur <= 0.75) {
+      hitTol += 0.7;
+      octaveTol += 0.7;
+    }
+    // notes très courtes <= 0.4 beat : encore un petit bonus
+    if (dur <= 0.4) {
+      hitTol += 0.5;
+      octaveTol += 0.5;
+    }
 
     const diff = vocalNote - targetNote;
     if (Math.abs(diff) <= hitTol) return true;
@@ -393,7 +406,6 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.textContent = `${label}: ${on ? 'ON' : 'OFF'}`;
   }
 
-  // synchro avec les flags par défaut (PRO par défaut)
   updateToggle(btnMetro, 'METRONOME', isMetroEnabled);
   updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
 
@@ -784,7 +796,7 @@ document.addEventListener('DOMContentLoaded', () => {
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
       });
 
-      micStream = stream; // 🎧 on garde le MediaStream brut pour CREPE
+      micStream = stream;
 
       const source = audioCtx.createMediaStreamSource(stream);
       analyser = audioCtx.createAnalyser();
@@ -808,7 +820,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       applyVolumes();
 
-      // On essaie d'initialiser CREPE dès qu'on a un audioCtx + micStream
+      // CREPE
       initCrepePitch();
     }
 
@@ -968,6 +980,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let lastHitJingleAt = 0;
+  let lastContinuousCupAt = 0; // 🏆 coupes en continu pendant que la note est bonne
+
   function playHitJingle(midiNote) {
     if (!audioCtx) return;
     const now = audioCtx.currentTime;
@@ -1018,7 +1032,7 @@ document.addEventListener('DOMContentLoaded', () => {
     o.start(t); o.stop(t + 0.05);
   }
 
-  // ---------------- PITCH DETECTOR (NSDF maison, utilisé en mode FUN + fallback) ----------------
+  // ---------------- PITCH DETECTOR (NSDF, FUN + fallback) ----------------
   function detectFreqNSDF_bounded(buf, sampleRate) {
     let sumSq = 0;
     for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
@@ -1597,17 +1611,15 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Voix : PRO => CREPE si dispo, FUN => NSDF comme avant
+    // Voix : PRO => CREPE si dispo, FUN => NSDF
     if (state === 'playing' && analyser && dataArray && audioCtx) {
       analyser.getFloatTimeDomainData(dataArray);
 
       let freq = null;
 
       if (isProMode() && crepeModelReady && crepeCurrentFreq) {
-        // 🎯 Mode PRO : CREPE
         freq = crepeCurrentFreq;
       } else {
-        // 🎉 Mode FUN (ou fallback) : NSDF maison
         freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
       }
 
@@ -1617,7 +1629,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (medianBuffer.length > 5) medianBuffer.shift();
         currentVocalNote = [...medianBuffer].sort((a, b) => a - b)[2];
       } else {
-        // PRO : silence => reset ; FUN : on garde dernière note (ou on crée une note de base)
         medianBuffer.length = 0;
         if (isProMode()) {
           currentVocalNote = null;
@@ -1628,7 +1639,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      // s'assure que la boucle CREPE tourne en PRO
       if (isProMode()) {
         ensureCrepeListening();
       }
@@ -1653,7 +1663,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (state === 'playing' && audioCtx && masterGain && masterOsc && subOsc) {
       melody.forEach((note, i) => {
-        // NOTE EFFECTIVE = MIDI + transposition
         const notePitch = note.n + transposeSemis;
 
         const xS = (note.t - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X;
@@ -1677,7 +1686,7 @@ document.addEventListener('DOMContentLoaded', () => {
           activeMIDINote = note;
           activeNotePitch = notePitch;
 
-          const timeSinceNoteStart = currentBeat - note.t; // beats
+          const timeSinceNoteStart = currentBeat - note.t;
           const isLastNote = (i === melody.length - 1);
           const sustainBeats = isLastNote ? 4.0 : 2.0;
 
@@ -1690,8 +1699,11 @@ document.addEventListener('DOMContentLoaded', () => {
             masterGain.gain.setTargetAtTime(MELODY_ENVELOPE_GAIN, audioCtx.currentTime, 0.08);
           }
 
-          if (isPitchAccepted(currentVocalNote, notePitch)) {
+          // ✅ validation note + coupes continues
+          if (isPitchAccepted(currentVocalNote, notePitch, note.d)) {
             isHitting = true;
+
+            // première fois : score + gros FX
             if (!note.validated) {
               note.validated = true;
               score += 50;
@@ -1699,6 +1711,14 @@ document.addEventListener('DOMContentLoaded', () => {
               spawnTrophy(TRIGGER_X, y);
               playHitJingle(notePitch);
               maybeRollBonus(TRIGGER_X, y);
+            }
+
+            // ensuite : flux régulier de coupes tant que la note reste juste
+            const now = nowAudio;
+            const minInterval = isFunMode() ? 0.20 : 0.16; // FUN un peu moins dense
+            if (now - lastContinuousCupAt > minInterval) {
+              spawnTrophy(TRIGGER_X + 30, y - 6);
+              lastContinuousCupAt = now;
             }
           }
         }
@@ -1763,7 +1783,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return { currentBeat };
   }
 
-  // ---------------- REDRAW SUR SCROLL (canvas + éventuel certificat) ----------------
+  // ---------------- REDRAW SUR SCROLL ----------------
   window.addEventListener('scroll', () => {
     requestAnimationFrame(() => {
       renderFrame();
@@ -1829,6 +1849,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     crepeCurrentFreq = null;
     crepeListening = false;
+    lastContinuousCupAt = 0;
 
     melody.forEach(n => {
       n.validated = false;
@@ -1879,7 +1900,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   stopBtn.onclick = () => location.reload();
 
-  // ---------------- CLIC SUR LE CANVAS (bouton RETRY) ----------------
+  // ---------------- CLIC SUR LE CANVAS (RETRY) ----------------
   canvas.addEventListener('click', (ev) => {
     if (state !== 'finished' || !retryCanvasButton) return;
 
@@ -1975,7 +1996,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const shared = parseSharedFromUrl();
     if (shared && shared.isValid) {
-      // Si on arrive via un lien partagé, on saute l'écran d'accueil
       if (welcomeScreen && mainUi) {
         welcomeScreen.classList.add('hidden');
         mainUi.classList.remove('hidden');
