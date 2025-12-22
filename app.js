@@ -136,7 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- MODE DE JEU ----------------
   // 'pro' = plus précis, 'fun' = plus permissif et garde la dernière note
-  let currentMode = 'pro';
+  let currentMode = 'fun';
 
   function isFunMode() { return currentMode === 'fun'; }
   function isProMode() { return currentMode === 'pro'; }
@@ -448,7 +448,6 @@ document.addEventListener('DOMContentLoaded', () => {
     proInput.type = 'radio';
     proInput.name = 'game-mode';
     proInput.value = 'pro';
-    proInput.checked = true;
     proLabel.appendChild(proInput);
     proLabel.appendChild(document.createTextNode(' 🎯 Pro'));
 
@@ -457,6 +456,7 @@ document.addEventListener('DOMContentLoaded', () => {
     funInput.type = 'radio';
     funInput.name = 'game-mode';
     funInput.value = 'fun';
+    funInput.checked = true;
     funLabel.appendChild(funInput);
     funLabel.appendChild(document.createTextNode(' 🎉 Fun'));
 
