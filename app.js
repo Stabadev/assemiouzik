@@ -14,6 +14,7 @@
  */
 
 document.addEventListener('DOMContentLoaded', () => {
+  // console.log("DOMContentLoaded");
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
   const lyricDiv = document.getElementById('lyrics-display');
@@ -29,6 +30,61 @@ document.addEventListener('DOMContentLoaded', () => {
   const welcomeScreen = document.getElementById('welcome-screen');
   const mainUi = document.getElementById('main-ui');
   const welcomeGoBtn = document.getElementById('welcome-go-btn');
+
+
+// window.onload = () => {
+//   const welcomeGoBtn = document.getElementById('welcome-go-btn');
+//   const welcomeScreen = document.getElementById('welcome-screen');
+//   const mainUi = document.getElementById('main-ui');
+//   console.log(welcomeGoBtn);
+//   if (welcomeGoBtn && welcomeScreen && mainUi) {
+//     welcomeGoBtn.addEventListener('click', () => {
+//       welcomeScreen.classList.add('hidden');
+//       mainUi.classList.remove('hidden');
+//       window.scrollTo({ top: 0, behavior: 'smooth' });
+//     });
+//   }
+// };
+
+
+
+// setTimeout(() => {
+//   let welcomeGoBtn = document.getElementById('welcome-go-btn');
+//   let welcomeScreen = document.getElementById('welcome-screen');
+//   let mainUi = document.getElementById('main-ui');
+
+//   // Check if welcomeGoBtn is set (not null or undefined)
+//   if (welcomeGoBtn !== null && welcomeGoBtn !== undefined) {
+//     console.log('welcomeGoBtn is set');
+//     console.log(welcomeGoBtn);
+//   } else {
+//     console.warn('welcomeGoBtn is NOT set');
+//     let welcomeGoBtn = document.getElementById('welcome-go-btn');
+//     let welcomeScreen = document.getElementById('welcome-screen');
+//     let mainUi = document.getElementById('main-ui');
+//       // Attach event listener only if all elements exist
+//     if (welcomeGoBtn && welcomeScreen && mainUi) {
+//       welcomeGoBtn.addEventListener('click', () => {
+//         welcomeScreen.classList.add('hidden');
+//         mainUi.classList.remove('hidden');
+//         window.scrollTo({ top: 0, behavior: 'smooth' });
+//       });
+//     }
+//     console.log(welcomeGoBtn);
+//   }
+
+  // // Or use a simpler check:
+  // if (welcomeGoBtn) {
+  //   console.log('welcomeGoBtn exists');
+  // }
+
+
+// }, 2000);
+
+
+
+
+
 
   // UI jeux
   const startBtn = document.getElementById('startBtn');
@@ -1785,6 +1841,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ---------------- GO ECRAN D’ACCUEIL ----------------
+
   if (welcomeGoBtn && welcomeScreen && mainUi) {
     welcomeGoBtn.addEventListener('click', () => {
       welcomeScreen.classList.add('hidden');
@@ -1792,6 +1849,25 @@ document.addEventListener('DOMContentLoaded', () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }
+
+  
+
+  // Instead of attaching to the button directly, listen on document
+  // document.addEventListener('click', (e) => {
+  //   console.log("click")
+  //   if (e.target.id === 'welcome-go-btn') {
+  //     console.log("target is welcome-go-btn")
+  //     const welcomeScreen = document.getElementById('welcome-screen');
+  //     const mainUi = document.getElementById('main-ui');
+      
+  //     if (welcomeScreen && mainUi) {
+  //       welcomeScreen.classList.add('hidden');
+  //       mainUi.classList.remove('hidden');
+  //       window.scrollTo({ top: 0, behavior: 'smooth' });
+  //     }
+  //   }
+  // }, true); // Use capture phase for better reliability
+
 
   // ---------------- BOOT ----------------
   (async () => {
