@@ -1,8 +1,9 @@
 /**
- * app.js fusionné — modes PRO / FUN
+ * app.js fusionné — modes PRO / FUN + TONALITÉ RESOLVE
  * - Sélecteur de mode avant la partie (au-dessus des volumes)
- * - Mode PRO : suivi plus précis (comme ta version pro)
- * - Mode FUN : plus permissif, commence avec une note et garde la dernière note
+ * - Sélecteur de tonalité: BASSE (-3 tons), NORMALE, HAUTE (+3 tons)
+ * - Mode PRO : suivi plus précis (CREPE / ml5.js)
+ * - Mode FUN : plus permissif (NSDF maison, comme avant)
  * - pseudo en fin de partie + URL signée
  * - affichage du beat
  * - dernière note sustain au moins 4 beats
@@ -132,6 +133,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const STADIUM_FILE_PATH = 'stadium.mp3';
   const LYRICS_FILE_PATH = 'lyrics.txt';
 
+  // ⚡ nouveau : chemin du modèle CREPE pour ml5
+  const CREPE_MODEL_URL = './model/';
+
   const BEATS_PER_LYRIC_LINE = 8;
 
   const BASE_W = 950;
@@ -198,8 +202,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (currentMode === newMode) return;
     currentMode = newMode;
 
-    // Option : ajuster quelques réglages par défaut selon le mode
-    // (on ne touche pas au run en cours)
     if (state === 'idle' || state === 'finished') {
       if (isProMode()) {
         isMetroEnabled = true;
@@ -211,6 +213,19 @@ document.addEventListener('DOMContentLoaded', () => {
       updateToggle(btnMetro, 'METRONOME', isMetroEnabled);
       updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
     }
+  }
+
+  // ---------------- TONALITÉ ----------------
+  // -3 tons = -6 demi-tons, +3 tons = +6 demi-tons
+  const TONE_LOW = -6;
+  const TONE_NORMAL = 0;
+  const TONE_HIGH = 6;
+
+  let transposeSemis = TONE_NORMAL; // 0 par défaut
+
+  function setTone(newSemis) {
+    if (typeof newSemis !== 'number') return;
+    transposeSemis = newSemis;
   }
 
   // ---------------- VOLUMES ----------------
@@ -229,10 +244,27 @@ document.addEventListener('DOMContentLoaded', () => {
   function noteToY(note) { return 250 - (note - CENTER_NOTE) * NOTE_HEIGHT_UNIT; }
   function isSamePitchClass(a, b) { return mod12(Math.round(a)) === mod12(Math.round(b)); }
 
-  function isPitchAccepted(vocalNote, targetNote) {
-    if (!vocalNote) return false;
-    const hitTol = isFunMode() ? FUN_HIT_TOL : PRO_HIT_TOL;
-    const octaveTol = isFunMode() ? FUN_OCTAVE_TOL : PRO_OCTAVE_TOL;
+  // 🔁 TOLÉRANCE ADAPTATIVE : notes courtes plus faciles à valider
+  function isPitchAccepted(vocalNote, targetNote, noteDurationBeats = 1) {
+    if (!Number.isFinite(vocalNote)) return false;
+
+    const dur = noteDurationBeats || 1;
+    const baseHit = isFunMode() ? FUN_HIT_TOL : PRO_HIT_TOL;
+    const baseOct = isFunMode() ? FUN_OCTAVE_TOL : PRO_OCTAVE_TOL;
+
+    let hitTol = baseHit;
+    let octaveTol = baseOct;
+
+    // notes <= 0.75 beat : on élargit un peu
+    if (dur <= 0.75) {
+      hitTol += 0.7;
+      octaveTol += 0.7;
+    }
+    // notes très courtes <= 0.4 beat : encore un petit bonus
+    if (dur <= 0.4) {
+      hitTol += 0.5;
+      octaveTol += 0.5;
+    }
 
     const diff = vocalNote - targetNote;
     if (Math.abs(diff) <= hitTol) return true;
@@ -242,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function foldToNearestSamePitchClass(vocalNote, targetNote) {
-    if (!vocalNote) return null;
+    if (!vocalNote && vocalNote !== 0) return null;
     const targetPc = mod12(Math.round(targetNote));
     const base = vocalNote;
 
@@ -354,8 +386,18 @@ document.addEventListener('DOMContentLoaded', () => {
   let isDrumEnabled = true;
   let lastProcessedBeat = -1;
 
+  // 🎧 AUDIO + CREPE
   let audioCtx = null, analyser = null, dataArray = null;
   let masterOsc = null, subOsc = null, masterGain = null;
+
+  // MediaStream brut pour CREPE
+  let micStream = null;
+
+  // CREPE / ml5
+  let crepePitch = null;
+  let crepeModelReady = false;
+  let crepeListening = false;
+  let crepeCurrentFreq = null;
 
   // buses
   let melodyBusGain = null;
@@ -420,7 +462,6 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.textContent = `${label}: ${on ? 'ON' : 'OFF'}`;
   }
 
-  // synchro avec les flags par défaut (PRO par défaut)
   updateToggle(btnMetro, 'METRONOME', isMetroEnabled);
   updateToggle(btnDrum, 'BATTERIE', isDrumEnabled);
 
@@ -487,6 +528,62 @@ document.addEventListener('DOMContentLoaded', () => {
     funInput.addEventListener('change', () => {
       if (funInput.checked) setMode('fun');
     });
+  }
+
+  // ---------------- TONE UI ----------------
+  function injectToneUI() {
+    if (!controlsRoot) return;
+    if (document.getElementById('tone-panel')) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'tone-panel';
+    panel.style.marginTop = '6px';
+    panel.style.marginBottom = '6px';
+    panel.style.paddingBottom = '6px';
+    panel.style.borderBottom = '1px dashed rgba(0,0,0,0.25)';
+
+    const title = document.createElement('div');
+    title.textContent = "TONALITÉ DE LA MÉLODIE";
+    title.style.fontSize = '9px';
+    title.style.marginBottom = '4px';
+    title.style.textAlign = 'center';
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justifyContent = 'center';
+    row.style.alignItems = 'center';
+    row.style.gap = '10px';
+    row.style.fontSize = '9px';
+    row.style.flexWrap = 'wrap';
+
+    function makeRadio(label, value, checked) {
+      const lab = document.createElement('label');
+      const inp = document.createElement('input');
+      inp.type = 'radio';
+      inp.name = 'tone-mode';
+      inp.value = String(value);
+      inp.checked = checked;
+      lab.appendChild(inp);
+      lab.appendChild(document.createTextNode(' ' + label));
+      inp.addEventListener('change', () => {
+        if (inp.checked) {
+          setTone(value);
+        }
+      });
+      return lab;
+    }
+
+    const lowLabel = makeRadio('BASSE (-3 tons)', TONE_LOW, false);
+    const normLabel = makeRadio('NORMALE', TONE_NORMAL, true);
+    const highLabel = makeRadio('HAUTE (+3 tons)', TONE_HIGH, false);
+
+    row.appendChild(lowLabel);
+    row.appendChild(normLabel);
+    row.appendChild(highLabel);
+
+    panel.appendChild(title);
+    panel.appendChild(row);
+    controlsRoot.appendChild(panel);
   }
 
   // ---------------- VOLUME UI ----------------
@@ -557,6 +654,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   injectModeUI();
+  injectToneUI();
   injectVolumeUI();
 
   function applyVolumes() {
@@ -754,6 +852,8 @@ document.addEventListener('DOMContentLoaded', () => {
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
       });
 
+      micStream = stream;
+
       const source = audioCtx.createMediaStreamSource(stream);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
@@ -775,12 +875,74 @@ document.addEventListener('DOMContentLoaded', () => {
       subOsc.start();
 
       applyVolumes();
+
+      // CREPE
+      initCrepePitch();
     }
 
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume();
     }
     await ensureStadiumLoaded();
+  }
+
+  // ---------------- CREPE / ml5.js ----------------
+  function initCrepePitch() {
+    if (crepePitch || !audioCtx || !micStream) return;
+
+    if (typeof ml5 === 'undefined' || !ml5.pitchDetection) {
+      console.warn('ml5.pitchDetection non disponible — utilisation NSDF uniquement (mode FUN/fallback).');
+      return;
+    }
+
+    try {
+      crepePitch = ml5.pitchDetection(
+        CREPE_MODEL_URL,
+        audioCtx,
+        micStream,
+        () => {
+          crepeModelReady = true;
+          console.log('Modèle CREPE prêt ✅');
+        }
+      );
+    } catch (e) {
+      console.warn('Erreur d’initialisation CREPE — fallback NSDF.', e);
+      crepePitch = null;
+      crepeModelReady = false;
+    }
+  }
+
+  function ensureCrepeListening() {
+    if (!crepePitch || !crepeModelReady || crepeListening || state !== 'playing') return;
+    crepeListening = true;
+
+    const loopPitch = () => {
+      if (!crepePitch || !crepeModelReady || state !== 'playing') {
+        crepeListening = false;
+        return;
+      }
+
+      crepePitch.getPitch((err, frequency) => {
+        if (err) {
+          console.warn('CREPE pitch error:', err);
+          crepeCurrentFreq = null;
+        } else {
+          if (frequency && Number.isFinite(frequency) && frequency > 0) {
+            crepeCurrentFreq = frequency;
+          } else {
+            crepeCurrentFreq = null;
+          }
+        }
+
+        if (state === 'playing') {
+          requestAnimationFrame(loopPitch);
+        } else {
+          crepeListening = false;
+        }
+      });
+    };
+
+    loopPitch();
   }
 
   // ---------------- STADIUM MP3 ----------------
@@ -874,6 +1036,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let lastHitJingleAt = 0;
+  let lastContinuousCupAt = 0; // 🏆 coupes en continu pendant que la note est bonne
+
   function playHitJingle(midiNote) {
     if (!audioCtx) return;
     const now = audioCtx.currentTime;
@@ -924,7 +1088,7 @@ document.addEventListener('DOMContentLoaded', () => {
     o.start(t); o.stop(t + 0.05);
   }
 
-  // ---------------- PITCH DETECTOR ----------------
+  // ---------------- PITCH DETECTOR (NSDF, FUN + fallback) ----------------
   function detectFreqNSDF_bounded(buf, sampleRate) {
     let sumSq = 0;
     for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
@@ -1467,11 +1631,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentBeat = firstNoteT;
 
     if (state === 'playing' || state === 'finished') {
-      // temps "normal" pendant et après la partie
       tSec = Math.max(0, nowAudio - startTime);
       currentBeat = (tSec / BEAT_DURATION) + firstNoteT;
     } else if (state === 'countdown') {
-      // 4 avant-beats avant la première note
       const tCountdown = Math.max(0, nowAudio - countdownStart);
       const preBeats = clamp(tCountdown / BEAT_DURATION, 0, COUNTDOWN_BEATS);
       currentBeat = firstNoteT - (COUNTDOWN_BEATS - preBeats);
@@ -1505,26 +1667,36 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Voix
+    // Voix : PRO => CREPE si dispo, FUN => NSDF
     if (state === 'playing' && analyser && dataArray && audioCtx) {
       analyser.getFloatTimeDomainData(dataArray);
-      const freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
+
+      let freq = null;
+
+      if (isProMode() && crepeModelReady && crepeCurrentFreq) {
+        freq = crepeCurrentFreq;
+      } else {
+        freq = detectFreqNSDF_bounded(dataArray, audioCtx.sampleRate);
+      }
+
       if (freq) {
         const n = 12 * Math.log2(freq / 440) + 69;
         medianBuffer.push(n);
         if (medianBuffer.length > 5) medianBuffer.shift();
         currentVocalNote = [...medianBuffer].sort((a, b) => a - b)[2];
       } else {
-        // PRO : silence -> reset / FUN : on garde la dernière note (et on en crée une si null)
         medianBuffer.length = 0;
         if (isProMode()) {
           currentVocalNote = null;
         } else {
-          // FUN : si aucune note encore, on part du centre
           if (currentVocalNote == null) {
             currentVocalNote = CENTER_NOTE;
           }
         }
+      }
+
+      if (isProMode()) {
+        ensureCrepeListening();
       }
     }
 
@@ -1542,16 +1714,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Mélodie + scoring
     let activeMIDINote = null;
+    let activeNotePitch = null;
     let isHitting = false;
 
     if (state === 'playing' && audioCtx && masterGain && masterOsc && subOsc) {
       melody.forEach((note, i) => {
+        const notePitch = note.n + transposeSemis;
+
         const xS = (note.t - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X;
         const xE = (melody[i + 1])
           ? (melody[i + 1].t - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X
           : (note.t + note.d - currentBeat) * PIXELS_PER_BEAT + TRIGGER_X;
 
-        const y = noteToY(note.n);
+        const y = noteToY(notePitch);
 
         if (xE > PIANO_WIDTH && xS < BASE_W) {
           ctx.fillStyle = note.validated ? "rgba(46,204,113,0.85)" : "rgba(231,76,60,0.85)";
@@ -1565,29 +1740,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (isActive) {
           activeMIDINote = note;
+          activeNotePitch = notePitch;
 
-          const timeSinceNoteStart = currentBeat - note.t; // beats
+          const timeSinceNoteStart = currentBeat - note.t;
           const isLastNote = (i === melody.length - 1);
           const sustainBeats = isLastNote ? 4.0 : 2.0;
 
           if (timeSinceNoteStart > sustainBeats) {
             masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
           } else {
-            const f = midiToFreq(note.n);
+            const f = midiToFreq(notePitch);
             masterOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
             subOsc.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.02);
             masterGain.gain.setTargetAtTime(MELODY_ENVELOPE_GAIN, audioCtx.currentTime, 0.08);
           }
 
-          if (isPitchAccepted(currentVocalNote, note.n)) {
+          // ✅ validation note + coupes continues
+          if (isPitchAccepted(currentVocalNote, notePitch, note.d)) {
             isHitting = true;
+
+            // première fois : score + gros FX
             if (!note.validated) {
               note.validated = true;
               score += 50;
               notesHit++;
               spawnTrophy(TRIGGER_X, y);
-              playHitJingle(note.n);
+              playHitJingle(notePitch);
               maybeRollBonus(TRIGGER_X, y);
+            }
+
+            // ensuite : flux régulier de coupes tant que la note reste juste
+            const now = nowAudio;
+            const minInterval = isFunMode() ? 0.20 : 0.16; // FUN un peu moins dense
+            if (now - lastContinuousCupAt > minInterval) {
+              spawnTrophy(TRIGGER_X + 30, y - 6);
+              lastContinuousCupAt = now;
             }
           }
         }
@@ -1625,7 +1812,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let targetY = displayBallY;
     if (currentVocalNote != null) {
       let visualNote = currentVocalNote;
-      if (activeMIDINote) visualNote = foldToNearestSamePitchClass(currentVocalNote, activeMIDINote.n);
+      if (activeNotePitch != null) {
+        visualNote = foldToNearestSamePitchClass(currentVocalNote, activeNotePitch);
+      }
       targetY = noteToY(visualNote);
     }
     displayBallY += (targetY - displayBallY) * 0.15;
@@ -1650,7 +1839,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return { currentBeat };
   }
 
-  // ---------------- REDRAW SUR SCROLL (canvas + éventuel certificat) ----------------
+  // ---------------- REDRAW SUR SCROLL ----------------
   window.addEventListener('scroll', () => {
     requestAnimationFrame(() => {
       renderFrame();
@@ -1704,7 +1893,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     medianBuffer.length = 0;
     if (isFunMode()) {
-      // FUN : commence par une note
       currentVocalNote = CENTER_NOTE;
     } else {
       currentVocalNote = null;
@@ -1714,6 +1902,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     finishStats = null;
     retryCanvasButton = null;
+
+    crepeCurrentFreq = null;
+    crepeListening = false;
+    lastContinuousCupAt = 0;
 
     melody.forEach(n => {
       n.validated = false;
@@ -1764,7 +1956,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   stopBtn.onclick = () => location.reload();
 
-  // ---------------- CLIC SUR LE CANVAS (bouton RETRY) ----------------
+  // ---------------- CLIC SUR LE CANVAS (RETRY) ----------------
   canvas.addEventListener('click', (ev) => {
     if (state !== 'finished' || !retryCanvasButton) return;
 
@@ -1880,7 +2072,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const shared = parseSharedFromUrl();
     if (shared && shared.isValid) {
-      // Si on arrive via un lien partagé, on saute l'écran d'accueil
       if (welcomeScreen && mainUi) {
         welcomeScreen.classList.add('hidden');
         mainUi.classList.remove('hidden');
